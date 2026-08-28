@@ -113,3 +113,19 @@ def test_article_response() -> None:
             }
         ],
     }
+
+
+def test_search_hit_response_accepts_missing_cosine_score() -> None:
+    hit = Hit(
+        id="art-15-p-3",
+        quote="Текст статьи.",
+        ref="Статья 15, часть 3",
+        article="15",
+        part=3,
+        part_label="3",
+        score=None,
+    )
+
+    response = SearchHitResponse.model_validate(hit)
+
+    assert response.score is None

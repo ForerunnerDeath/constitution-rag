@@ -1,6 +1,7 @@
 from fastapi import Request
 
 from app.search.embedder import Embedder
+from app.search.retriever import Retriever
 from app.search.store import ChromaStore
 
 
@@ -20,3 +21,12 @@ def get_store(request: Request) -> ChromaStore:
         raise RuntimeError("ChromaStore is not initialized")
 
     return store
+
+
+def get_retriever(request: Request) -> Retriever:
+    retriever = getattr(request.app.state, "retriever", None)
+
+    if not isinstance(retriever, Retriever):
+        raise RuntimeError("Retriever is not initialized")
+
+    return retriever

@@ -443,11 +443,11 @@ def test_get_by_article_returns_matching_chunks() -> None:
     assert hits[0].article == "29"
     assert hits[0].part == 1
     assert hits[0].part_label == "1"
-    assert hits[0].score == pytest.approx(1.0)
+    assert hits[0].score is None
 
     assert hits[1].id == "art-29-p-2"
     assert hits[1].part == 2
-    assert hits[1].score == pytest.approx(1.0)
+    assert hits[1].score is None
 
     collection.get.assert_called_once_with(
         where={"article": "29"},
@@ -640,3 +640,58 @@ def test_get_by_article_returns_chunks_in_document_order() -> None:
         "art-81-p-3-3.1",
         "art-81-p-4",
     ]
+
+
+def test_get_all_returns_all_chunks() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        collection.get.return_value = {
+            "ids": [
+                "art-28",
+                "art-3-p-1",
+            ],
+            "documents": [
+                "Свобода совести.",
+                "Источником власти является народ.",
+            ],
+            "metadatas": [
+                {
+                    "ref": "Статья 28",
+                    "kind": "article",
+                    "article": "28",
+                },
+                {
+                    "ref": "Статья 3, часть 1",
+                    "kind": "article",
+                    "article": "3",
+                    "part": 1,
+                    "part_label": "1",
+                },
+            ],
+        }
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        hits = store.get_all()
+
+    assert [hit.id for hit in hits] == [
+        "art-28",
+        "art-3-p-1",
+    ]
+
+    assert hits[0].quote == "Свобода совести."
+    assert hits[1].article == "3"
+
+    collection.get.assert_called_once_with(
+        include=[
+            "documents",
+            "metadatas",
+        ]
+    )

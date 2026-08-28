@@ -10,7 +10,7 @@ class SearchHitResponse(BaseModel):
     article: str | None
     part: int | None
     part_label: str | None
-    score: float
+    score: float | None
 
 
 class SearchResponse(BaseModel):

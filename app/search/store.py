@@ -16,7 +16,7 @@ class Hit:
     article: str | None
     part: int | None
     part_label: str | None
-    score: float
+    score: float | None
 
 
 def _chunk_to_metadata(chunk: Chunk) -> dict[str, str | int | float | bool]:
@@ -48,7 +48,7 @@ def _build_hit(
     chunk_id: str,
     quote: str,
     metadata: Metadata,
-    distance: float,
+    distance: float | None,
 ) -> Hit:
     ref = metadata.get("ref")
     if not isinstance(ref, str):
@@ -67,6 +67,8 @@ def _build_hit(
     part_label_value = metadata.get("part_label")
     part_label = part_label_value if isinstance(part_label_value, str) else None
 
+    score = None if distance is None else 1.0 - distance
+
     return Hit(
         id=chunk_id,
         quote=quote,
@@ -74,7 +76,7 @@ def _build_hit(
         article=article,
         part=part,
         part_label=part_label,
-        score=1.0 - distance,
+        score=score,
     )
 
 
@@ -219,7 +221,7 @@ class ChromaStore:
                     chunk_id=chunk_id,
                     quote=quote,
                     metadata=metadata,
-                    distance=0.0,
+                    distance=None,
                 )
             )
 
@@ -241,3 +243,37 @@ class ChromaStore:
                 }
             },
         )
+
+    def get_all(self) -> list[Hit]:
+        result = self.collection.get(
+            include=[
+                "documents",
+                "metadatas",
+            ]
+        )
+
+        documents = result["documents"]
+        metadatas = result["metadatas"]
+
+        if documents is None or metadatas is None:
+            raise RuntimeError("Chroma get did not return required fields")
+
+        hits: list[Hit] = []
+
+        for chunk_id, quote, metadata in zip(
+            result["ids"],
+            documents,
+            metadatas,
+        ):
+            hits.append(
+                _build_hit(
+                    chunk_id=chunk_id,
+                    quote=quote,
+                    metadata=metadata,
+                    distance=None,
+                )
+            )
+
+        hits.sort(key=lambda hit: hit.id)
+
+        return hits

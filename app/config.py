@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     chroma_collection: str = "constitution_e5_small"
 
     embedding_model: str = "intfloat/multilingual-e5-small"
-    min_score: float = 0.70
+    min_score: float = 0.80
 
     llm_enabled: bool = False
     llm_base_url: str = ""
