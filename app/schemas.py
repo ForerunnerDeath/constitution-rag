@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SearchHitResponse(BaseModel):
@@ -32,3 +32,27 @@ class ArticleChunkResponse(BaseModel):
 class ArticleResponse(BaseModel):
     article: str
     chunks: list[ArticleChunkResponse]
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=500)
+    k: int = Field(default=5, ge=1, le=20)
+
+
+class CitationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    quote: str
+    ref: str
+    article: str | None
+    part: int | None
+    part_label: str | None
+
+
+class AskResponse(BaseModel):
+    found: bool
+    answer: str | None
+    message: str | None
+    citations: list[CitationResponse]
+    llm_used: bool
