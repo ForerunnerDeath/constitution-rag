@@ -7,10 +7,15 @@ from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
 
 from app.config import get_settings
-from app.deps import get_retriever, get_store
+from app.deps import get_rag_service, get_retriever, get_store
+from app.llm.client import OpenAICompatibleLLMClient
+from app.llm.rag import RAGService
 from app.schemas import (
     ArticleChunkResponse,
     ArticleResponse,
+    AskRequest,
+    AskResponse,
+    CitationResponse,
     SearchHitResponse,
     SearchResponse,
 )
@@ -40,7 +45,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         min_score=settings.min_score,
     )
 
-    yield
+    llm_client = None
+
+    if settings.llm_enabled:
+        llm_client = OpenAICompatibleLLMClient(
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            max_tokens=settings.llm_max_tokens,
+            timeout_seconds=settings.llm_timeout_seconds,
+        )
+
+    app.state.llm_client = llm_client
+
+    app.state.rag_service = RAGService(
+        retriever=app.state.retriever,
+        llm_client=llm_client,
+    )
+
+    try:
+        yield
+    finally:
+        if llm_client is not None:
+            await llm_client.close()
 
 
 app = FastAPI(
@@ -106,4 +133,22 @@ async def get_article(
     return ArticleResponse(
         article=number,
         chunks=[ArticleChunkResponse.model_validate(hit) for hit in hits],
+    )
+
+
+@app.post("/ask", response_model=AskResponse)
+async def ask(
+    payload: AskRequest, rag_service: RAGService = Depends(get_rag_service)
+) -> AskResponse:
+    result = await rag_service.ask(
+        payload.question,
+        payload.k,
+    )
+
+    return AskResponse(
+        found=result.found,
+        answer=result.answer,
+        message=result.message,
+        citations=[CitationResponse.model_validate(hit) for hit in result.hits],
+        llm_used=result.llm_used,
     )

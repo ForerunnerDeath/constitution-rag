@@ -3,6 +3,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.deps import get_rag_service
+from app.llm.rag import RAGResult, RAGService
 from app.main import app
 from app.search.embedder import Embedder
 from app.search.retriever import Retriever
@@ -16,6 +18,7 @@ def test_lifespan_initializes_dependencies() -> None:
     fake_lexical_index = MagicMock()
     fake_corpus = [MagicMock()]
     fake_store.get_all.return_value = fake_corpus
+    fake_rag_service = MagicMock()
 
     with (
         patch(
@@ -34,12 +37,17 @@ def test_lifespan_initializes_dependencies() -> None:
             "app.main.LexicalIndex",
             return_value=fake_lexical_index,
         ) as lexical_index_class,
+        patch(
+            "app.main.RAGService",
+            return_value=fake_rag_service,
+        ) as rag_service_class,
     ):
         with TestClient(app):
             assert app.state.embedder is fake_embedder
             assert app.state.store is fake_store
             assert app.state.lexical_index is fake_lexical_index
             assert app.state.retriever is fake_retriever
+            assert app.state.rag_service is fake_rag_service
 
     embedder_class.assert_called_once_with("intfloat/multilingual-e5-small")
 
@@ -54,6 +62,11 @@ def test_lifespan_initializes_dependencies() -> None:
         store=fake_store,
         lexical_index=fake_lexical_index,
         min_score=0.80,
+    )
+
+    rag_service_class.assert_called_once_with(
+        retriever=fake_retriever,
+        llm_client=None,
     )
 
 
@@ -500,3 +513,256 @@ def test_search_enables_hybrid_retrieval() -> None:
         5,
         True,
     )
+
+
+def test_lifespan_initializes_and_closes_llm_client() -> None:
+    fake_settings = MagicMock()
+
+    fake_settings.embedding_model = "test-embedding"
+    fake_settings.chroma_path = "test-chroma"
+    fake_settings.chroma_collection = "test-collection"
+    fake_settings.min_score = 0.80
+
+    fake_settings.llm_enabled = True
+    fake_settings.llm_model = "test-model"
+    fake_settings.llm_api_key = "test-key"
+    fake_settings.llm_base_url = "http://localhost:1234/v1"
+    fake_settings.llm_max_tokens = 512
+    fake_settings.llm_timeout_seconds = 20.0
+
+    fake_embedder = MagicMock()
+    fake_store = MagicMock()
+    fake_store.get_all.return_value = []
+    fake_retriever = MagicMock()
+
+    fake_llm_client = MagicMock()
+    fake_llm_client.close = AsyncMock()
+
+    fake_rag_service = MagicMock()
+
+    with (
+        patch(
+            "app.main.get_settings",
+            return_value=fake_settings,
+        ),
+        patch(
+            "app.main.Embedder",
+            return_value=fake_embedder,
+        ),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+        patch("app.main.LexicalIndex"),
+        patch(
+            "app.main.Retriever",
+            return_value=fake_retriever,
+        ),
+        patch(
+            "app.main.OpenAICompatibleLLMClient",
+            return_value=fake_llm_client,
+        ) as llm_client_class,
+        patch(
+            "app.main.RAGService",
+            return_value=fake_rag_service,
+        ) as rag_service_class,
+    ):
+        with TestClient(app):
+            assert app.state.llm_client is fake_llm_client
+            assert app.state.rag_service is fake_rag_service
+
+        fake_llm_client.close.assert_awaited_once()
+
+    llm_client_class.assert_called_once_with(
+        model="test-model",
+        api_key="test-key",
+        base_url="http://localhost:1234/v1",
+        max_tokens=512,
+        timeout_seconds=20.0,
+    )
+
+    rag_service_class.assert_called_once_with(
+        retriever=fake_retriever,
+        llm_client=fake_llm_client,
+    )
+
+
+def test_ask_returns_generated_answer_with_citations() -> None:
+    hit = Hit(
+        id="art-3-p-1",
+        quote="Носителем суверенитета является многонациональный народ.",
+        ref="Статья 3, часть 1",
+        article="3",
+        part=1,
+        part_label="1",
+        score=0.91,
+    )
+
+    fake_rag_service = MagicMock(spec=RAGService)
+    fake_rag_service.ask = AsyncMock(
+        return_value=RAGResult(
+            found=True,
+            answer=(
+                "Источником власти является многонациональный народ "
+                "[Статья 3, часть 1]."
+            ),
+            message=None,
+            hits=[hit],
+            llm_used=True,
+        )
+    )
+
+    app.dependency_overrides[get_rag_service] = lambda: fake_rag_service
+
+    try:
+        with (
+            patch("app.main.Embedder"),
+            patch("app.main.ChromaStore"),
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/ask",
+                    json={
+                        "question": "Кто является источником власти?",
+                        "k": 5,
+                    },
+                )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+
+    assert response.json() == {
+        "found": True,
+        "answer": (
+            "Источником власти является многонациональный народ [Статья 3, часть 1]."
+        ),
+        "message": None,
+        "citations": [
+            {
+                "id": "art-3-p-1",
+                "quote": ("Носителем суверенитета является многонациональный народ."),
+                "ref": "Статья 3, часть 1",
+                "article": "3",
+                "part": 1,
+                "part_label": "1",
+            }
+        ],
+        "llm_used": True,
+    }
+
+    fake_rag_service.ask.assert_awaited_once_with(
+        "Кто является источником власти?",
+        5,
+    )
+
+
+def test_ask_returns_not_found_response() -> None:
+    fake_rag_service = MagicMock(spec=RAGService)
+    fake_rag_service.ask = AsyncMock(
+        return_value=RAGResult(
+            found=False,
+            answer=None,
+            message="В тексте Конституции прямого ответа не нашлось.",
+            hits=[],
+            llm_used=False,
+        )
+    )
+
+    app.dependency_overrides[get_rag_service] = lambda: fake_rag_service
+
+    try:
+        with (
+            patch("app.main.Embedder"),
+            patch("app.main.ChromaStore"),
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/ask",
+                    json={
+                        "question": "Какая погода в Москве?",
+                        "k": 5,
+                    },
+                )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+
+    assert response.json() == {
+        "found": False,
+        "answer": None,
+        "message": "В тексте Конституции прямого ответа не нашлось.",
+        "citations": [],
+        "llm_used": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "",
+        "a",
+        "ab",
+        "x" * 501,
+    ],
+)
+def test_ask_rejects_invalid_question_length(question: str) -> None:
+    fake_rag_service = MagicMock(spec=RAGService)
+    fake_rag_service.ask = AsyncMock()
+
+    app.dependency_overrides[get_rag_service] = lambda: fake_rag_service
+
+    try:
+        with (
+            patch("app.main.Embedder"),
+            patch("app.main.ChromaStore"),
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/ask",
+                    json={
+                        "question": question,
+                        "k": 5,
+                    },
+                )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    fake_rag_service.ask.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "k",
+    [
+        0,
+        -1,
+        21,
+        100,
+    ],
+)
+def test_ask_rejects_invalid_k(k: int) -> None:
+    fake_rag_service = MagicMock(spec=RAGService)
+    fake_rag_service.ask = AsyncMock()
+
+    app.dependency_overrides[get_rag_service] = lambda: fake_rag_service
+
+    try:
+        with (
+            patch("app.main.Embedder"),
+            patch("app.main.ChromaStore"),
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/ask",
+                    json={
+                        "question": "Корректный вопрос",
+                        "k": k,
+                    },
+                )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    fake_rag_service.ask.assert_not_awaited()

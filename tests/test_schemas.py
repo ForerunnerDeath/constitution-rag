@@ -1,6 +1,9 @@
 from app.schemas import (
     ArticleChunkResponse,
     ArticleResponse,
+    AskRequest,
+    AskResponse,
+    CitationResponse,
     SearchHitResponse,
     SearchResponse,
 )
@@ -129,3 +132,44 @@ def test_search_hit_response_accepts_missing_cosine_score() -> None:
     response = SearchHitResponse.model_validate(hit)
 
     assert response.score is None
+
+
+def test_citation_response_from_hit() -> None:
+    hit = Hit(
+        id="art-3-p-1",
+        quote="Носителем суверенитета является многонациональный народ.",
+        ref="Статья 3, часть 1",
+        article="3",
+        part=1,
+        part_label="1",
+        score=0.84,
+    )
+
+    response = CitationResponse.model_validate(hit)
+
+    assert response.model_dump() == {
+        "id": "art-3-p-1",
+        "quote": "Носителем суверенитета является многонациональный народ.",
+        "ref": "Статья 3, часть 1",
+        "article": "3",
+        "part": 1,
+        "part_label": "1",
+    }
+
+
+def test_ask_response_without_answer() -> None:
+    response = AskResponse(
+        found=False,
+        answer=None,
+        message="В тексте Конституции прямого ответа не нашлось.",
+        citations=[],
+        llm_used=False,
+    )
+
+    assert response.model_dump() == {
+        "found": False,
+        "answer": None,
+        "message": "В тексте Конституции прямого ответа не нашлось.",
+        "citations": [],
+        "llm_used": False,
+    }

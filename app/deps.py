@@ -1,5 +1,6 @@
 from fastapi import Request
 
+from app.llm.rag import RAGService
 from app.search.embedder import Embedder
 from app.search.retriever import Retriever
 from app.search.store import ChromaStore
@@ -30,3 +31,12 @@ def get_retriever(request: Request) -> Retriever:
         raise RuntimeError("Retriever is not initialized")
 
     return retriever
+
+
+def get_rag_service(request: Request) -> RAGService:
+    rag_service = getattr(request.app.state, "rag_service", None)
+
+    if not isinstance(rag_service, RAGService):
+        raise RuntimeError("RAGService is not initialized")
+
+    return rag_service
