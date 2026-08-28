@@ -10,6 +10,7 @@ __pycache__/
 
 # Chroma persistent storage
 data/chroma/
+data/eval_chroma/
 
 # Raw source data
 data/raw/constitution.txt
