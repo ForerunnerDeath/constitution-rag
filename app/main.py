@@ -8,7 +8,12 @@ from fastapi.concurrency import run_in_threadpool
 
 from app.config import get_settings
 from app.deps import get_embedder, get_store
-from app.schemas import SearchHitResponse, SearchResponse
+from app.schemas import (
+    ArticleChunkResponse,
+    ArticleResponse,
+    SearchHitResponse,
+    SearchResponse,
+)
 from app.search.embedder import Embedder
 from app.search.store import ChromaStore
 
@@ -74,4 +79,22 @@ async def search(
         hits=[SearchHitResponse.model_validate(hit) for hit in hits],
         took_ms=took_ms,
         collection_version=store.collection_name,
+    )
+
+
+@app.get("/articles/{number}", response_model=ArticleResponse)
+async def get_article(
+    number: str, store: ChromaStore = Depends(get_store)
+) -> ArticleResponse:
+    hits = await run_in_threadpool(store.get_by_article, number)
+
+    if not hits:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Article {number} not found",
+        )
+
+    return ArticleResponse(
+        article=number,
+        chunks=[ArticleChunkResponse.model_validate(hit) for hit in hits],
     )
