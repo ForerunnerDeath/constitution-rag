@@ -81,6 +81,41 @@ def _build_hit(
 _UPSERT_BATCH_SIZE = 512
 
 
+def _part_order(part_label: str | None) -> tuple[int, ...]:
+    if part_label is None:
+        return ()
+
+    start_label = part_label.split("-", 1)[0]
+
+    try:
+        return tuple(int(value) for value in start_label.split("."))
+    except ValueError as exc:
+        raise ValueError(f"Invalid part label: {part_label}") from exc
+
+
+def _fragment_order(chunk_id: str) -> int:
+    marker = "-c-"
+
+    if marker not in chunk_id:
+        return 0
+
+    fragment = chunk_id.rsplit(marker, 1)[1]
+
+    if not fragment.isdigit():
+        raise ValueError(f"Invalid chunk fragment id: {chunk_id}")
+
+    return int(fragment)
+
+
+def _article_hit_sort_key(hit: Hit) -> tuple[bool, tuple[int, ...], int, str]:
+    return (
+        hit.part_label is not None,
+        _part_order(hit.part_label),
+        _fragment_order(hit.id),
+        hit.id,
+    )
+
+
 class ChromaStore:
     def __init__(self, path: Path, collection_name: str) -> None:
         self.client = chromadb.PersistentClient(path=str(path))
@@ -188,6 +223,7 @@ class ChromaStore:
                 )
             )
 
+        hits.sort(key=_article_hit_sort_key)
         return hits
 
     def count(self) -> int:

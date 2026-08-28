@@ -266,3 +266,167 @@ def test_search_runs_blocking_operations_in_threadpool() -> None:
         fake_vector,
         5,
     )
+
+
+def test_get_article_returns_all_chunks_in_order() -> None:
+    fake_embedder = MagicMock(spec=Embedder)
+
+    fake_store = MagicMock(spec=ChromaStore)
+    fake_store.collection_name = "test-collection"
+
+    fake_store.get_by_article.return_value = [
+        Hit(
+            id="art-81-p-1",
+            quote="Часть 1.",
+            ref="Статья 81, часть 1",
+            article="81",
+            part=1,
+            part_label="1",
+            score=1.0,
+        ),
+        Hit(
+            id="art-81-p-2-c-1",
+            quote="Часть 2, фрагмент 1.",
+            ref="Статья 81, часть 2",
+            article="81",
+            part=2,
+            part_label="2",
+            score=1.0,
+        ),
+        Hit(
+            id="art-81-p-2-c-2",
+            quote="Часть 2, фрагмент 2.",
+            ref="Статья 81, часть 2",
+            article="81",
+            part=2,
+            part_label="2",
+            score=1.0,
+        ),
+    ]
+
+    with (
+        patch(
+            "app.main.Embedder",
+            return_value=fake_embedder,
+        ),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+    ):
+        with TestClient(app) as client:
+            response = client.get("/articles/81")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["article"] == "81"
+    assert [chunk["id"] for chunk in data["chunks"]] == [
+        "art-81-p-1",
+        "art-81-p-2-c-1",
+        "art-81-p-2-c-2",
+    ]
+
+    assert "score" not in data["chunks"][0]
+
+
+def test_get_article_accepts_decimal_article_number() -> None:
+    fake_embedder = MagicMock(spec=Embedder)
+
+    fake_store = MagicMock(spec=ChromaStore)
+    fake_store.collection_name = "test-collection"
+
+    fake_store.get_by_article.return_value = [
+        Hit(
+            id="art-67.1-p-1",
+            quote="Текст статьи 67.1.",
+            ref="Статья 67.1, часть 1",
+            article="67.1",
+            part=1,
+            part_label="1",
+            score=1.0,
+        )
+    ]
+
+    with (
+        patch(
+            "app.main.Embedder",
+            return_value=fake_embedder,
+        ),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+    ):
+        with TestClient(app) as client:
+            response = client.get("/articles/67.1")
+
+    assert response.status_code == 200
+    assert response.json()["article"] == "67.1"
+
+    fake_store.get_by_article.assert_called_once_with("67.1")
+
+
+def test_get_article_returns_404_when_article_not_found() -> None:
+    fake_embedder = MagicMock(spec=Embedder)
+
+    fake_store = MagicMock(spec=ChromaStore)
+    fake_store.collection_name = "test-collection"
+    fake_store.get_by_article.return_value = []
+
+    with (
+        patch(
+            "app.main.Embedder",
+            return_value=fake_embedder,
+        ),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+    ):
+        with TestClient(app) as client:
+            response = client.get("/articles/999")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "Article 999 not found",
+    }
+
+
+def test_get_article_does_not_use_embedder() -> None:
+    fake_embedder = MagicMock(spec=Embedder)
+
+    fake_store = MagicMock(spec=ChromaStore)
+    fake_store.collection_name = "test-collection"
+    fake_store.get_by_article.return_value = [
+        Hit(
+            id="art-67.1",
+            quote="Текст статьи 67.1.",
+            ref="Статья 67.1",
+            article="67.1",
+            part=None,
+            part_label=None,
+            score=1.0,
+        )
+    ]
+
+    with (
+        patch(
+            "app.main.Embedder",
+            return_value=fake_embedder,
+        ),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+    ):
+        with TestClient(app) as client:
+            response = client.get("/articles/67.1")
+
+    assert response.status_code == 200
+
+    fake_embedder.embed_query.assert_not_called()
+    fake_store.search.assert_not_called()
+
+    fake_store.get_by_article.assert_called_once_with("67.1")

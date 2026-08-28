@@ -564,3 +564,79 @@ def test_recreate_deletes_and_recreates_collection() -> None:
     }
 
     assert store.collection is new_collection
+
+
+def test_get_by_article_returns_chunks_in_document_order() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        collection.get.return_value = {
+            "ids": [
+                "art-81-p-2-c-2",
+                "art-81-p-4",
+                "art-81-p-1",
+                "art-81-p-3-3.1",
+                "art-81-p-2-c-1",
+            ],
+            "documents": [
+                "Часть 2, фрагмент 2.",
+                "Часть 4.",
+                "Часть 1.",
+                "Части 3-3.1.",
+                "Часть 2, фрагмент 1.",
+            ],
+            "metadatas": [
+                {
+                    "ref": "Статья 81, часть 2",
+                    "kind": "article",
+                    "article": "81",
+                    "part": 2,
+                    "part_label": "2",
+                },
+                {
+                    "ref": "Статья 81, часть 4",
+                    "kind": "article",
+                    "article": "81",
+                    "part": 4,
+                    "part_label": "4",
+                },
+                {
+                    "ref": "Статья 81, часть 1",
+                    "kind": "article",
+                    "article": "81",
+                    "part": 1,
+                    "part_label": "1",
+                },
+                {
+                    "ref": "Статья 81, части 3-3.1",
+                    "kind": "article",
+                    "article": "81",
+                    "part_label": "3-3.1",
+                },
+                {
+                    "ref": "Статья 81, часть 2",
+                    "kind": "article",
+                    "article": "81",
+                    "part": 2,
+                    "part_label": "2",
+                },
+            ],
+        }
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        hits = store.get_by_article("81")
+
+    assert [hit.id for hit in hits] == [
+        "art-81-p-1",
+        "art-81-p-2-c-1",
+        "art-81-p-2-c-2",
+        "art-81-p-3-3.1",
+        "art-81-p-4",
+    ]
