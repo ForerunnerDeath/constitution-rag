@@ -12,6 +12,14 @@ from app.search.store import ChromaStore, Hit
 
 
 def test_lifespan_initializes_dependencies() -> None:
+    fake_settings = MagicMock()
+
+    fake_settings.embedding_model = "intfloat/multilingual-e5-small"
+    fake_settings.chroma_path = "data/chroma"
+    fake_settings.chroma_collection = "constitution_e5_small"
+    fake_settings.min_score = 0.833
+    fake_settings.llm_enabled = False
+
     fake_embedder = MagicMock()
     fake_store = MagicMock()
     fake_retriever = MagicMock()
@@ -41,6 +49,10 @@ def test_lifespan_initializes_dependencies() -> None:
             "app.main.RAGService",
             return_value=fake_rag_service,
         ) as rag_service_class,
+        patch(
+            "app.main.get_settings",
+            return_value=fake_settings,
+        ),
     ):
         with TestClient(app):
             assert app.state.embedder is fake_embedder
@@ -61,7 +73,7 @@ def test_lifespan_initializes_dependencies() -> None:
         embedder=fake_embedder,
         store=fake_store,
         lexical_index=fake_lexical_index,
-        min_score=0.80,
+        min_score=0.833,
     )
 
     rag_service_class.assert_called_once_with(
