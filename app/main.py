@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
 
 from app.config import get_settings
-from app.deps import get_embedder, get_store
+from app.deps import get_retriever, get_store
 from app.schemas import (
     ArticleChunkResponse,
     ArticleResponse,
@@ -15,6 +15,8 @@ from app.schemas import (
     SearchResponse,
 )
 from app.search.embedder import Embedder
+from app.search.lexical import LexicalIndex
+from app.search.retriever import Retriever
 from app.search.store import ChromaStore
 
 
@@ -27,6 +29,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.store = ChromaStore(
         path=settings.chroma_path,
         collection_name=settings.chroma_collection,
+    )
+
+    app.state.lexical_index = LexicalIndex(app.state.store.get_all())
+
+    app.state.retriever = Retriever(
+        embedder=app.state.embedder,
+        store=app.state.store,
+        lexical_index=app.state.lexical_index,
+        min_score=settings.min_score,
     )
 
     yield
@@ -64,21 +75,19 @@ def readyz(store: ChromaStore = Depends(get_store)) -> dict[str, str | int]:
 async def search(
     q: Annotated[str, Query(min_length=3, max_length=500)],
     k: Annotated[int, Query(ge=1, le=20)] = 5,
-    embedder: Embedder = Depends(get_embedder),
-    store: ChromaStore = Depends(get_store),
+    use_hybrid: bool = False,
+    retriever: Retriever = Depends(get_retriever),
 ) -> SearchResponse:
     started = perf_counter()
 
-    vector = await run_in_threadpool(embedder.embed_query, q)
-
-    hits = await run_in_threadpool(store.search, vector, k)
+    hits = await run_in_threadpool(retriever.retrieve, q, k, use_hybrid)
 
     took_ms = (perf_counter() - started) * 1000
 
     return SearchResponse(
         hits=[SearchHitResponse.model_validate(hit) for hit in hits],
         took_ms=took_ms,
-        collection_version=store.collection_name,
+        collection_version=retriever.collection_name,
     )
 
 

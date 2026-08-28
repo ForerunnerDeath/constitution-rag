@@ -5,12 +5,17 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.search.embedder import Embedder
+from app.search.retriever import Retriever
 from app.search.store import ChromaStore, Hit
 
 
 def test_lifespan_initializes_dependencies() -> None:
     fake_embedder = MagicMock()
     fake_store = MagicMock()
+    fake_retriever = MagicMock()
+    fake_lexical_index = MagicMock()
+    fake_corpus = [MagicMock()]
+    fake_store.get_all.return_value = fake_corpus
 
     with (
         patch(
@@ -21,14 +26,35 @@ def test_lifespan_initializes_dependencies() -> None:
             "app.main.ChromaStore",
             return_value=fake_store,
         ) as store_class,
+        patch(
+            "app.main.Retriever",
+            return_value=fake_retriever,
+        ) as retriever_class,
+        patch(
+            "app.main.LexicalIndex",
+            return_value=fake_lexical_index,
+        ) as lexical_index_class,
     ):
         with TestClient(app):
             assert app.state.embedder is fake_embedder
             assert app.state.store is fake_store
+            assert app.state.lexical_index is fake_lexical_index
+            assert app.state.retriever is fake_retriever
 
     embedder_class.assert_called_once_with("intfloat/multilingual-e5-small")
 
     store_class.assert_called_once()
+
+    fake_store.get_all.assert_called_once_with()
+
+    lexical_index_class.assert_called_once_with(fake_corpus)
+
+    retriever_class.assert_called_once_with(
+        embedder=fake_embedder,
+        store=fake_store,
+        lexical_index=fake_lexical_index,
+        min_score=0.80,
+    )
 
 
 def test_healthz() -> None:
@@ -84,15 +110,13 @@ def test_readyz_returns_503_when_collection_is_empty() -> None:
 
 def test_search_returns_retrieval_results() -> None:
     fake_embedder = MagicMock(spec=Embedder)
-    fake_embedder.embed_query.return_value = [
-        0.1,
-        0.2,
-        0.3,
-    ]
 
     fake_store = MagicMock(spec=ChromaStore)
     fake_store.collection_name = "test-collection"
-    fake_store.search.return_value = [
+
+    fake_retriever = MagicMock(spec=Retriever)
+    fake_retriever.collection_name = "test-collection"
+    fake_retriever.retrieve.return_value = [
         Hit(
             id="art-3-p-1",
             quote="Носителем суверенитета является народ.",
@@ -112,6 +136,10 @@ def test_search_returns_retrieval_results() -> None:
         patch(
             "app.main.ChromaStore",
             return_value=fake_store,
+        ),
+        patch(
+            "app.main.Retriever",
+            return_value=fake_retriever,
         ),
     ):
         with TestClient(app) as client:
@@ -142,11 +170,10 @@ def test_search_returns_retrieval_results() -> None:
     assert body["collection_version"] == "test-collection"
     assert body["took_ms"] >= 0
 
-    fake_embedder.embed_query.assert_called_once_with("Кто является источником власти?")
-
-    fake_store.search.assert_called_once_with(
-        [0.1, 0.2, 0.3],
+    fake_retriever.retrieve.assert_called_once_with(
+        "Кто является источником власти?",
         3,
+        False,
     )
 
 
@@ -221,14 +248,16 @@ def test_search_rejects_invalid_k(k: int) -> None:
     fake_store.search.assert_not_called()
 
 
-def test_search_runs_blocking_operations_in_threadpool() -> None:
+def test_search_runs_retriever_in_threadpool() -> None:
     fake_embedder = MagicMock(spec=Embedder)
 
     fake_store = MagicMock(spec=ChromaStore)
     fake_store.collection_name = "test-collection"
 
-    fake_vector = [0.1, 0.2, 0.3]
-    fake_hits = []
+    fake_retriever = MagicMock(spec=Retriever)
+    fake_retriever.collection_name = "test-collection"
+
+    fake_hits: list[Hit] = []
 
     with (
         patch(
@@ -240,8 +269,12 @@ def test_search_runs_blocking_operations_in_threadpool() -> None:
             return_value=fake_store,
         ),
         patch(
+            "app.main.Retriever",
+            return_value=fake_retriever,
+        ),
+        patch(
             "app.main.run_in_threadpool",
-            new=AsyncMock(side_effect=[fake_vector, fake_hits]),
+            new=AsyncMock(return_value=fake_hits),
         ) as run_in_threadpool_mock,
     ):
         with TestClient(app) as client:
@@ -254,17 +287,11 @@ def test_search_runs_blocking_operations_in_threadpool() -> None:
 
     assert response.status_code == 200
 
-    assert run_in_threadpool_mock.await_count == 2
-
-    assert run_in_threadpool_mock.await_args_list[0].args == (
-        fake_embedder.embed_query,
+    run_in_threadpool_mock.assert_awaited_once_with(
+        fake_retriever.retrieve,
         "Кто является источником власти?",
-    )
-
-    assert run_in_threadpool_mock.await_args_list[1].args == (
-        fake_store.search,
-        fake_vector,
         5,
+        False,
     )
 
 
@@ -430,3 +457,46 @@ def test_get_article_does_not_use_embedder() -> None:
     fake_store.search.assert_not_called()
 
     fake_store.get_by_article.assert_called_once_with("67.1")
+
+
+def test_search_enables_hybrid_retrieval() -> None:
+    fake_embedder = MagicMock(spec=Embedder)
+
+    fake_store = MagicMock(spec=ChromaStore)
+    fake_store.collection_name = "test-collection"
+
+    fake_retriever = MagicMock(spec=Retriever)
+    fake_retriever.collection_name = "test-collection"
+    fake_retriever.retrieve.return_value = []
+
+    with (
+        patch(
+            "app.main.Embedder",
+            return_value=fake_embedder,
+        ),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+        patch(
+            "app.main.Retriever",
+            return_value=fake_retriever,
+        ),
+    ):
+        with TestClient(app) as client:
+            response = client.get(
+                "/search",
+                params={
+                    "q": "статья 15",
+                    "k": 5,
+                    "use_hybrid": "true",
+                },
+            )
+
+    assert response.status_code == 200
+
+    fake_retriever.retrieve.assert_called_once_with(
+        "статья 15",
+        5,
+        True,
+    )
