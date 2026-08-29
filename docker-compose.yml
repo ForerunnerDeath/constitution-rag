@@ -1,0 +1,21 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
+
+    image: constitution-rag:local
+
+    env_file:
+      - .env
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - ./data/raw:/app/data/raw:ro
+      - chroma_data:/app/data/chroma
+
+volumes:
+  chroma_data:

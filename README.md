@@ -16,6 +16,7 @@ RAG-сервис на FastAPI для поиска точных цитат из �
 - BM25
 - OpenAI-compatible LLM API
 - Pytest
+- Docker / Docker Compose
 
 ## Retrieval Evaluation
 
@@ -244,4 +245,243 @@ use_hybrid      = false
 ```text
 Recall@5 >= 0.85
 Refusal accuracy = 100%
+```
+
+
+## Docker
+
+Приложение можно полностью запустить через Docker Compose.
+
+Embedding-модель `intfloat/multilingual-e5-small` загружается во время сборки Docker image и после этого доступна контейнеру без обращения к Hugging Face Hub во время runtime.
+
+Контейнер приложения запускается от non-root пользователя.
+
+### Подготовка
+
+Создайте локальный `.env` на основе:
+
+```text
+.env.example
+```
+
+Исходный текст Конституции должен находиться по пути:
+
+```text
+data/raw/constitution.txt
+```
+
+Этот каталог подключается к контейнеру read-only.
+
+Chroma index хранится отдельно в Docker named volume и не теряется при пересоздании контейнера.
+
+### Сборка image
+
+```bash
+docker compose build
+```
+
+Во время первой сборки устанавливаются Python-зависимости и скачивается embedding-модель, поэтому первый build может занять несколько минут.
+
+Последующие сборки используют Docker layer cache.
+
+### Ingest
+
+Перед первым запуском API необходимо построить Chroma index:
+
+```bash
+docker compose run --rm app python -m scripts.ingest --recreate
+```
+
+Ожидаемый результат:
+
+```text
+Units: 384
+Chunks: 383
+Vectors: 383
+Stored: 383
+```
+
+Ingest выполняется во временном контейнере.
+
+После его завершения контейнер удаляется, но индекс сохраняется в Docker volume.
+
+### Запуск API
+
+```bash
+docker compose up -d
+```
+
+Проверить состояние контейнера:
+
+```bash
+docker compose ps
+```
+
+После успешного старта контейнер должен перейти в состояние:
+
+```text
+healthy
+```
+
+API доступен по адресу:
+
+```text
+http://127.0.0.1:8000
+```
+
+Swagger UI:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+### Health check
+
+```bash
+curl http://127.0.0.1:8000/healthz
+```
+
+Ответ:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+Docker image также содержит встроенный healthcheck этого endpoint.
+
+### Readiness check
+
+```bash
+curl http://127.0.0.1:8000/readyz
+```
+
+После успешного ingest:
+
+```json
+{
+  "status": "ok",
+  "stored": 383
+}
+```
+
+`/healthz` показывает, что само приложение работает.
+
+`/readyz` дополнительно проверяет, что Chroma collection содержит данные и сервис готов выполнять retrieval.
+
+### Search
+
+Пример semantic search:
+
+```bash
+curl -G "http://127.0.0.1:8000/search" \
+  --data-urlencode "q=Кто является источником власти?" \
+  --data-urlencode "k=5"
+```
+
+Ответ содержит найденные цитаты, ссылки на статьи и cosine scores.
+
+### Получение статьи
+
+```bash
+curl http://127.0.0.1:8000/articles/3
+```
+
+Endpoint возвращает все сохранённые chunks указанной статьи в порядке документа.
+
+### RAG-вопрос
+
+```bash
+curl -X POST "http://127.0.0.1:8000/ask" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Кто является источником власти?",
+    "k": 5
+  }'
+```
+
+Если:
+
+```env
+LLM_ENABLED=false
+```
+
+retrieval всё равно выполняется и citations возвращаются, но генерация ответа отключена:
+
+```text
+found = true
+answer = null
+llm_used = false
+```
+
+### Использование Ollama с Docker
+
+Ollama не входит в текущий Docker Compose stack.
+
+Если Ollama работает на host-машине, адрес:
+
+```text
+http://127.0.0.1:11434
+```
+
+из Docker-контейнера указывает уже на сам контейнер, а не на host.
+
+При использовании Docker Desktop для обращения к Ollama на host можно настроить:
+
+```env
+LLM_ENABLED=true
+LLM_BASE_URL=http://host.docker.internal:11434/v1
+LLM_API_KEY=ollama
+LLM_MODEL=qwen3:4b-instruct
+```
+
+### Логи
+
+```bash
+docker compose logs -f app
+```
+
+Логи содержат:
+
+- `request_id`;
+- HTTP method/path/status/duration;
+- sanitized question для `/search` и `/ask`;
+- найденные chunk IDs и scores;
+- `embed_ms`;
+- `search_ms`;
+- `llm_ms`;
+- `prompt_version`;
+- факт вызова LLM;
+- refusal flag.
+
+### Persistence Chroma
+
+Chroma хранится в Docker named volume:
+
+```text
+chroma_data
+```
+
+Поэтому:
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+не удаляет построенный индекс.
+
+Для намеренного удаления контейнеров **и volumes** используется:
+
+```bash
+docker compose down -v
+```
+
+После этой команды Chroma index будет удалён и потребуется повторный ingest.
+
+### Остановка
+
+```bash
+docker compose down
 ```
