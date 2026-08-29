@@ -80,6 +80,11 @@ def build_components(*, min_score: float) -> tuple[Retriever, Embedder, ChromaSt
         collection_name=settings.chroma_collection,
     )
 
+    store.ensure_embedding_compatibility(
+        model_name=embedder.model_name,
+        dim=embedder.dim,
+    )
+
     lexical_index = LexicalIndex(store.get_all())
 
     retriever = Retriever(

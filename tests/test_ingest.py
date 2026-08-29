@@ -1,6 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -70,6 +70,8 @@ def test_run_ingest_embeds_chunk_embed_texts() -> None:
         patch("scripts.ingest.ChromaStore") as store_class,
     ):
         embedder = MagicMock()
+        embedder.model_name = "test-model"
+        embedder.dim = 3
         embedder.embed_passages.return_value = fake_vectors
         embedder_class.return_value = embedder
 
@@ -111,6 +113,24 @@ def test_run_ingest_embeds_chunk_embed_texts() -> None:
 
     store.recreate.assert_not_called()
 
+    store.ensure_embedding_compatibility.assert_called_once_with(
+        model_name="test-model",
+        dim=3,
+    )
+
+    store.assert_has_calls(
+        [
+            call.ensure_embedding_compatibility(
+                model_name="test-model",
+                dim=3,
+            ),
+            call.upsert(
+                chunks,
+                fake_vectors,
+            ),
+        ]
+    )
+
     store.upsert.assert_called_once_with(
         chunks,
         fake_vectors,
@@ -137,6 +157,8 @@ def test_run_ingest_recreates_collection_when_requested() -> None:
         patch("scripts.ingest.ChromaStore") as store_class,
     ):
         embedder = MagicMock()
+        embedder.model_name = "test-model"
+        embedder.dim = 3
         embedder.embed_passages.return_value = []
         embedder_class.return_value = embedder
 
@@ -153,7 +175,24 @@ def test_run_ingest_recreates_collection_when_requested() -> None:
         )
 
     store.recreate.assert_called_once_with()
+
+    store.ensure_embedding_compatibility.assert_called_once_with(
+        model_name="test-model",
+        dim=3,
+    )
+
     store.upsert.assert_called_once_with([], [])
+
+    store.assert_has_calls(
+        [
+            call.recreate(),
+            call.ensure_embedding_compatibility(
+                model_name="test-model",
+                dim=3,
+            ),
+            call.upsert([], []),
+        ]
+    )
 
 
 def test_main_runs_ingest_with_settings(capsys: pytest.CaptureFixture[str]) -> None:

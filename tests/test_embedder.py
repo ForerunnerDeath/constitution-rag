@@ -197,3 +197,10 @@ def test_dim_raises_when_model_does_not_expose_dimension() -> None:
             match="Embedding model does not expose its dimension",
         ):
             _ = embedder.dim
+
+
+def test_model_name_returns_configured_model_name() -> None:
+    with patch("app.search.embedder.SentenceTransformer"):
+        embedder = Embedder("intfloat/multilingual-e5-small")
+
+    assert embedder.model_name == "intfloat/multilingual-e5-small"
