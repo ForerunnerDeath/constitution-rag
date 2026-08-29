@@ -10,6 +10,11 @@ from app.search.embedder import Embedder
 from app.search.retriever import RetrievalResult, Retriever
 from app.search.store import ChromaStore, Hit
 
+EXPECTED_DISCLAIMER = (
+    "Сервис возвращает выдержки из текста Конституции РФ "
+    "и не является юридической консультацией."
+)
+
 
 def test_lifespan_initializes_dependencies() -> None:
     fake_settings = MagicMock()
@@ -206,6 +211,7 @@ def test_search_returns_retrieval_results() -> None:
 
     assert body["collection_version"] == "test-collection"
     assert body["took_ms"] >= 0
+    assert body["disclaimer"] == EXPECTED_DISCLAIMER
 
     fake_retriever.retrieve_with_metrics.assert_called_once_with(
         "Кто является источником власти?",
@@ -390,6 +396,7 @@ def test_get_article_returns_all_chunks_in_order() -> None:
     data = response.json()
 
     assert data["article"] == "81"
+    assert data["disclaimer"] == EXPECTED_DISCLAIMER
     assert [chunk["id"] for chunk in data["chunks"]] == [
         "art-81-p-1",
         "art-81-p-2-c-1",
@@ -682,6 +689,7 @@ def test_ask_returns_generated_answer_with_citations() -> None:
             }
         ],
         "llm_used": True,
+        "disclaimer": EXPECTED_DISCLAIMER,
     }
 
     fake_rag_service.ask.assert_awaited_once_with(
@@ -728,6 +736,7 @@ def test_ask_returns_not_found_response() -> None:
         "message": "В тексте Конституции прямого ответа не нашлось.",
         "citations": [],
         "llm_used": False,
+        "disclaimer": EXPECTED_DISCLAIMER,
     }
 
 
