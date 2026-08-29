@@ -231,6 +231,40 @@ class ChromaStore:
     def count(self) -> int:
         return self.collection.count()
 
+    def ensure_embedding_compatibility(self, *, model_name: str, dim: int) -> None:
+        stored = self.count()
+        metadata = dict(self.collection.metadata or {})
+
+        stored_model = metadata.get("embedding_model")
+        stored_dim = metadata.get("embedding_dim")
+
+        if stored == 0:
+            metadata["embedding_model"] = model_name
+            metadata["embedding_dim"] = dim
+
+            self.collection.modify(metadata=metadata)
+            return
+
+        if not isinstance(stored_model, str) or not (
+            isinstance(stored_dim, int) and not isinstance(stored_dim, bool)
+        ):
+            raise RuntimeError(
+                "Chroma collection has no embedding provenance metadata; "
+                "recreate the collection"
+            )
+
+        if stored_model != model_name:
+            raise RuntimeError(
+                "Embedding model mismatch: "
+                f"index uses {stored_model!r}, runtime uses {model_name!r}"
+            )
+
+        if stored_dim != dim:
+            raise RuntimeError(
+                "Embedding dimension mismatch: "
+                f"index uses {stored_dim}, runtime uses {dim}"
+            )
+
     def recreate(self) -> None:
         self.client.delete_collection(name=self.collection_name)
 

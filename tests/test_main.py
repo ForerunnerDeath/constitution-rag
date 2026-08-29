@@ -22,6 +22,8 @@ def test_lifespan_initializes_dependencies() -> None:
     fake_settings.rate_limit_per_minute = 60
 
     fake_embedder = MagicMock()
+    fake_embedder.model_name = "intfloat/multilingual-e5-small"
+    fake_embedder.dim = 384
     fake_store = MagicMock()
     fake_retriever = MagicMock()
     fake_lexical_index = MagicMock()
@@ -65,6 +67,11 @@ def test_lifespan_initializes_dependencies() -> None:
     embedder_class.assert_called_once_with("intfloat/multilingual-e5-small")
 
     store_class.assert_called_once()
+
+    fake_store.ensure_embedding_compatibility.assert_called_once_with(
+        model_name="intfloat/multilingual-e5-small",
+        dim=384,
+    )
 
     fake_store.get_all.assert_called_once_with()
 
@@ -1067,3 +1074,55 @@ def test_search_rejects_question_empty_after_sanitization() -> None:
     assert response.status_code == 422
 
     fake_retriever.retrieve_with_metrics.assert_not_called()
+
+
+def test_lifespan_fails_fast_on_embedding_mismatch() -> None:
+    fake_settings = MagicMock()
+
+    fake_settings.embedding_model = "model-b"
+    fake_settings.chroma_path = "data/chroma"
+    fake_settings.chroma_collection = "test-collection"
+    fake_settings.min_score = 0.833
+    fake_settings.llm_enabled = False
+    fake_settings.rate_limit_per_minute = 60
+
+    fake_embedder = MagicMock()
+    fake_embedder.model_name = "model-b"
+    fake_embedder.dim = 384
+
+    fake_store = MagicMock()
+    fake_store.ensure_embedding_compatibility.side_effect = RuntimeError(
+        "Embedding model mismatch"
+    )
+
+    with (
+        patch(
+            "app.main.get_settings",
+            return_value=fake_settings,
+        ),
+        patch(
+            "app.main.Embedder",
+            return_value=fake_embedder,
+        ),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+        patch("app.main.LexicalIndex") as lexical_index_class,
+        patch("app.main.Retriever") as retriever_class,
+    ):
+        with pytest.raises(
+            RuntimeError,
+            match="Embedding model mismatch",
+        ):
+            with TestClient(app):
+                pass
+
+    fake_store.ensure_embedding_compatibility.assert_called_once_with(
+        model_name="model-b",
+        dim=384,
+    )
+
+    fake_store.get_all.assert_not_called()
+    lexical_index_class.assert_not_called()
+    retriever_class.assert_not_called()

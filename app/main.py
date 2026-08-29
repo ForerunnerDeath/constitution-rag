@@ -42,6 +42,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         collection_name=settings.chroma_collection,
     )
 
+    app.state.store.ensure_embedding_compatibility(
+        model_name=app.state.embedder.model_name,
+        dim=app.state.embedder.dim,
+    )
+
     app.state.lexical_index = LexicalIndex(app.state.store.get_all())
 
     app.state.retriever = Retriever(

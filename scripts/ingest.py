@@ -23,12 +23,16 @@ def run_ingest(
 
     embedder = Embedder(embedding_model)
 
-    vectors = embedder.embed_passages([chunk.embed_text for chunk in chunks])
-
     store = ChromaStore(path=chroma_path, collection_name=collection_name)
 
     if recreate:
         store.recreate()
+
+    store.ensure_embedding_compatibility(
+        model_name=embedder.model_name, dim=embedder.dim
+    )
+
+    vectors = embedder.embed_passages([chunk.embed_text for chunk in chunks])
 
     store.upsert(chunks, vectors)
 

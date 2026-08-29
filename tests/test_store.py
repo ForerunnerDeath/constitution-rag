@@ -695,3 +695,147 @@ def test_get_all_returns_all_chunks() -> None:
             "metadatas",
         ]
     )
+
+
+def test_embedding_compatibility_initializes_metadata_for_empty_collection() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.count.return_value = 0
+        collection.metadata = {
+            "existing_key": "existing_value",
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        store.ensure_embedding_compatibility(
+            model_name="intfloat/multilingual-e5-small",
+            dim=384,
+        )
+
+    collection.modify.assert_called_once_with(
+        metadata={
+            "existing_key": "existing_value",
+            "embedding_model": "intfloat/multilingual-e5-small",
+            "embedding_dim": 384,
+        }
+    )
+
+
+def test_embedding_compatibility_accepts_matching_non_empty_collection() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.count.return_value = 383
+        collection.metadata = {
+            "embedding_model": "intfloat/multilingual-e5-small",
+            "embedding_dim": 384,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        store.ensure_embedding_compatibility(
+            model_name="intfloat/multilingual-e5-small",
+            dim=384,
+        )
+
+    collection.modify.assert_not_called()
+
+
+def test_embedding_compatibility_rejects_different_model_with_same_dimension() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.count.return_value = 383
+        collection.metadata = {
+            "embedding_model": "model-a",
+            "embedding_dim": 384,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="Embedding model mismatch",
+        ):
+            store.ensure_embedding_compatibility(
+                model_name="model-b",
+                dim=384,
+            )
+
+    collection.modify.assert_not_called()
+
+
+def test_embedding_compatibility_rejects_different_dimension() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.count.return_value = 383
+        collection.metadata = {
+            "embedding_model": "model-a",
+            "embedding_dim": 384,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="Embedding dimension mismatch",
+        ):
+            store.ensure_embedding_compatibility(
+                model_name="model-a",
+                dim=768,
+            )
+
+    collection.modify.assert_not_called()
+
+
+def test_embedding_compatibility_rejects_legacy_non_empty_collection() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.count.return_value = 383
+        collection.metadata = None
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="recreate",
+        ):
+            store.ensure_embedding_compatibility(
+                model_name="intfloat/multilingual-e5-small",
+                dim=384,
+            )
+
+    collection.modify.assert_not_called()
