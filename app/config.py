@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 512
     llm_timeout_seconds: float = 20.0
 
+    rate_limit_per_minute: int = 60
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

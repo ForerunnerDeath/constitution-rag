@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from time import perf_counter
 
 from app.search.embedder import Embedder
 from app.search.lexical import LexicalHit, LexicalIndex
@@ -23,6 +24,13 @@ def _deduplicate_hits(hits: list[Hit]) -> list[Hit]:
 class FusedHit:
     hit: Hit
     rrf_score: float
+
+
+@dataclass(frozen=True)
+class RetrievalResult:
+    hits: list[Hit]
+    embed_ms: float
+    search_ms: float
 
 
 def reciprocal_rank_fusion(
@@ -84,13 +92,24 @@ class Retriever:
         self.candidate_k = candidate_k
 
     def retrieve(self, query: str, k: int = 5, use_hybrid: bool = False) -> list[Hit]:
+        return self.retrieve_with_metrics(query, k, use_hybrid).hits
+
+    def retrieve_with_metrics(
+        self, query: str, k: int = 5, use_hybrid: bool = False
+    ) -> RetrievalResult:
         if k <= 0:
             raise ValueError("k must be greater than zero")
 
         if k > self.candidate_k:
             raise ValueError("k must not exceed candidate_k")
 
+        embed_started = perf_counter()
+
         vector = self.embedder.embed_query(query)
+
+        embed_ms = (perf_counter() - embed_started) * 1000
+
+        search_started = perf_counter()
 
         vector_candidates = _deduplicate_hits(
             self.store.search(
@@ -109,25 +128,34 @@ class Retriever:
                 relevant_vector_hits.append(hit)
 
         if not relevant_vector_hits:
-            return []
+            hits: list[Hit] = []
 
-        if not use_hybrid:
-            return relevant_vector_hits[:k]
+        elif not use_hybrid:
+            hits = relevant_vector_hits[:k]
 
-        if self.lexical_index is None:
-            raise RuntimeError("Lexical index is not initialized")
+        else:
+            if self.lexical_index is None:
+                raise RuntimeError("Lexical index is not initialized")
 
-        lexical_candidates = self.lexical_index.search(
-            query,
-            k=self.candidate_k,
+            lexical_candidates = self.lexical_index.search(
+                query,
+                k=self.candidate_k,
+            )
+
+            fused_hits = reciprocal_rank_fusion(
+                relevant_vector_hits,
+                lexical_candidates,
+            )
+
+            hits = [fused_hit.hit for fused_hit in fused_hits[:k]]
+
+        search_ms = (perf_counter() - search_started) * 1000
+
+        return RetrievalResult(
+            hits=hits,
+            embed_ms=embed_ms,
+            search_ms=search_ms,
         )
-
-        fused_hits = reciprocal_rank_fusion(
-            relevant_vector_hits,
-            lexical_candidates,
-        )
-
-        return [fused_hit.hit for fused_hit in fused_hits[:k]]
 
     @property
     def collection_name(self) -> str:

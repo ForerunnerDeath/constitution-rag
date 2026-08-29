@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -9,8 +9,18 @@ from app.llm.rag import (
     RAGService,
     build_user_prompt,
 )
-from app.search.retriever import Retriever
+from app.search.retriever import RetrievalResult, Retriever
 from app.search.store import Hit
+
+
+def make_retrieval_result(
+    hits: list[Hit], *, embed_ms: float = 12.0, search_ms: float = 8.0
+) -> RetrievalResult:
+    return RetrievalResult(
+        hits=hits,
+        embed_ms=embed_ms,
+        search_ms=search_ms,
+    )
 
 
 def make_hit() -> Hit:
@@ -95,7 +105,7 @@ def test_build_user_prompt_keeps_document_instructions_inside_documents() -> Non
 @pytest.mark.asyncio
 async def test_rag_does_not_call_llm_when_retrieval_is_empty() -> None:
     retriever = MagicMock(spec=Retriever)
-    retriever.retrieve.return_value = []
+    retriever.retrieve_with_metrics.return_value = make_retrieval_result([])
 
     llm = MagicMock()
     llm.generate = AsyncMock()
@@ -116,7 +126,7 @@ async def test_rag_does_not_call_llm_when_retrieval_is_empty() -> None:
     assert result.hits == []
     assert result.llm_used is False
 
-    retriever.retrieve.assert_called_once_with(
+    retriever.retrieve_with_metrics.assert_called_once_with(
         "Какая погода в Москве?",
         5,
     )
@@ -129,7 +139,7 @@ async def test_rag_generates_answer_from_retrieved_hits() -> None:
     hit = make_hit()
 
     retriever = MagicMock(spec=Retriever)
-    retriever.retrieve.return_value = [hit]
+    retriever.retrieve_with_metrics.return_value = make_retrieval_result([hit])
 
     llm = MagicMock()
     llm.generate = AsyncMock(
@@ -143,10 +153,17 @@ async def test_rag_generates_answer_from_retrieved_hits() -> None:
         llm_client=llm,
     )
 
-    result = await service.ask(
-        "Кто является источником власти?",
-        k=5,
-    )
+    with patch(
+        "app.llm.rag.perf_counter",
+        side_effect=[
+            10.000,
+            10.125,
+        ],
+    ):
+        result = await service.ask(
+            "Кто является источником власти?",
+            k=5,
+        )
 
     assert result.found is True
     assert result.answer is not None
@@ -162,13 +179,20 @@ async def test_rag_generates_answer_from_retrieved_hits() -> None:
         ),
     )
 
+    assert result.embed_ms == pytest.approx(12.0)
+    assert result.search_ms == pytest.approx(8.0)
+
+    assert result.llm_called is True
+    assert result.llm_used is True
+    assert result.llm_ms == pytest.approx(125.0)
+
 
 @pytest.mark.asyncio
 async def test_rag_returns_hits_when_llm_is_disabled() -> None:
     hit = make_hit()
 
     retriever = MagicMock(spec=Retriever)
-    retriever.retrieve.return_value = [hit]
+    retriever.retrieve_with_metrics.return_value = make_retrieval_result([hit])
 
     service = RAGService(
         retriever=retriever,
@@ -184,6 +208,8 @@ async def test_rag_returns_hits_when_llm_is_disabled() -> None:
     assert result.message == LLM_UNAVAILABLE_MESSAGE
     assert result.hits == [hit]
     assert result.llm_used is False
+    assert result.llm_called is False
+    assert result.llm_ms is None
 
 
 @pytest.mark.asyncio
@@ -191,7 +217,7 @@ async def test_rag_returns_hits_when_llm_fails() -> None:
     hit = make_hit()
 
     retriever = MagicMock(spec=Retriever)
-    retriever.retrieve.return_value = [hit]
+    retriever.retrieve_with_metrics.return_value = make_retrieval_result([hit])
 
     llm = MagicMock()
     llm.generate = AsyncMock(side_effect=RuntimeError("LLM is unavailable"))
@@ -201,15 +227,24 @@ async def test_rag_returns_hits_when_llm_fails() -> None:
         llm_client=llm,
     )
 
-    result = await service.ask(
-        "Кто является источником власти?",
-    )
+    with patch(
+        "app.llm.rag.perf_counter",
+        side_effect=[
+            20.000,
+            20.050,
+        ],
+    ):
+        result = await service.ask(
+            "Кто является источником власти?",
+        )
 
     assert result.found is True
     assert result.answer is None
     assert result.message == LLM_UNAVAILABLE_MESSAGE
     assert result.hits == [hit]
     assert result.llm_used is False
+    assert result.llm_called is True
+    assert result.llm_ms == pytest.approx(50.0)
 
 
 @pytest.mark.asyncio
@@ -217,7 +252,7 @@ async def test_rag_handles_llm_not_found() -> None:
     hit = make_hit()
 
     retriever = MagicMock(spec=Retriever)
-    retriever.retrieve.return_value = [hit]
+    retriever.retrieve_with_metrics.return_value = make_retrieval_result([hit])
 
     llm = MagicMock()
     llm.generate = AsyncMock(return_value="NOT_FOUND")
@@ -227,16 +262,27 @@ async def test_rag_handles_llm_not_found() -> None:
         llm_client=llm,
     )
 
-    result = await service.ask(
-        "Вопрос без прямого ответа",
-    )
+    with patch(
+        "app.llm.rag.perf_counter",
+        side_effect=[
+            30.000,
+            30.040,
+        ],
+    ):
+        result = await service.ask(
+            "Вопрос без прямого ответа",
+        )
 
     assert result.found is False
     assert result.answer is None
     assert result.message == NOT_FOUND_MESSAGE
 
-    # Retrieval действительно был успешным —
-    # найденные источники не придумывались моделью и не теряются.
     assert result.hits == [hit]
 
     assert result.llm_used is True
+
+    assert result.embed_ms == pytest.approx(12.0)
+    assert result.search_ms == pytest.approx(8.0)
+
+    assert result.llm_called is True
+    assert result.llm_ms == pytest.approx(40.0)

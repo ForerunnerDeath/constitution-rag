@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -370,3 +370,87 @@ def test_retrieve_does_not_use_lexical_index_when_hybrid_disabled() -> None:
 
     assert [hit.id for hit in hits] == ["vector-hit"]
     lexical_index.search.assert_not_called()
+
+
+def test_retrieve_with_metrics_returns_hits_and_timings() -> None:
+    embedder = MagicMock(spec=Embedder)
+    store = MagicMock(spec=ChromaStore)
+
+    vector = [0.1, 0.2]
+
+    embedder.embed_query.return_value = vector
+
+    expected_hit = _make_hit(
+        hit_id="art-3",
+        score=0.90,
+        article="3",
+    )
+
+    store.search.return_value = [expected_hit]
+
+    retriever = Retriever(
+        embedder=embedder,
+        store=store,
+        min_score=0.80,
+    )
+
+    with patch(
+        "app.search.retriever.perf_counter",
+        side_effect=[
+            10.000,
+            10.025,
+            20.000,
+            20.075,
+        ],
+    ):
+        result = retriever.retrieve_with_metrics(
+            "Кто является источником власти?",
+            k=5,
+        )
+
+    assert result.hits == [expected_hit]
+
+    assert result.embed_ms == pytest.approx(25.0)
+    assert result.search_ms == pytest.approx(75.0)
+
+    embedder.embed_query.assert_called_once_with("Кто является источником власти?")
+
+    store.search.assert_called_once_with(
+        vector,
+        20,
+    )
+
+
+def test_retrieve_with_metrics_returns_timings_when_no_hits_found() -> None:
+    embedder = MagicMock(spec=Embedder)
+    store = MagicMock(spec=ChromaStore)
+
+    embedder.embed_query.return_value = [0.1]
+
+    store.search.return_value = [
+        _make_hit(
+            hit_id="irrelevant",
+            score=0.70,
+        )
+    ]
+
+    retriever = Retriever(
+        embedder=embedder,
+        store=store,
+        min_score=0.80,
+    )
+
+    with patch(
+        "app.search.retriever.perf_counter",
+        side_effect=[
+            1.000,
+            1.010,
+            2.000,
+            2.020,
+        ],
+    ):
+        result = retriever.retrieve_with_metrics("Как приготовить борщ?")
+
+    assert result.hits == []
+    assert result.embed_ms == pytest.approx(10.0)
+    assert result.search_ms == pytest.approx(20.0)
