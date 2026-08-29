@@ -8,6 +8,11 @@ from app.schemas import (
 )
 from app.search.store import Hit
 
+EXPECTED_DISCLAIMER = (
+    "Сервис возвращает выдержки из текста Конституции РФ "
+    "и не является юридической консультацией."
+)
+
 
 def test_search_hit_response_from_hit() -> None:
     hit = Hit(
@@ -64,6 +69,7 @@ def test_search_response() -> None:
         ],
         "took_ms": 12.5,
         "collection_version": "constitution_e5_small",
+        "disclaimer": EXPECTED_DISCLAIMER,
     }
 
 
@@ -114,6 +120,7 @@ def test_article_response() -> None:
                 "part_label": "1",
             }
         ],
+        "disclaimer": EXPECTED_DISCLAIMER,
     }
 
 
@@ -171,4 +178,5 @@ def test_ask_response_without_answer() -> None:
         "message": "В тексте Конституции прямого ответа не нашлось.",
         "citations": [],
         "llm_used": False,
+        "disclaimer": EXPECTED_DISCLAIMER,
     }

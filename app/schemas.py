@@ -1,5 +1,10 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+API_DISCLAIMER = (
+    "Сервис возвращает выдержки из текста Конституции РФ "
+    "и не является юридической консультацией."
+)
+
 
 class SearchHitResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -17,6 +22,7 @@ class SearchResponse(BaseModel):
     hits: list[SearchHitResponse]
     took_ms: float
     collection_version: str
+    disclaimer: str = API_DISCLAIMER
 
 
 class ArticleChunkResponse(BaseModel):
@@ -32,6 +38,7 @@ class ArticleChunkResponse(BaseModel):
 class ArticleResponse(BaseModel):
     article: str
     chunks: list[ArticleChunkResponse]
+    disclaimer: str = API_DISCLAIMER
 
 
 class AskRequest(BaseModel):
@@ -56,3 +63,4 @@ class AskResponse(BaseModel):
     message: str | None
     citations: list[CitationResponse]
     llm_used: bool
+    disclaimer: str = API_DISCLAIMER
