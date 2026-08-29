@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from time import perf_counter
 
 from starlette.concurrency import run_in_threadpool
 
@@ -20,6 +21,8 @@ NOT_FOUND
 6. При ответе указывай ссылки на использованные положения в формате
    [Статья N, часть M] или в ином формате ссылки, указанном в поле "Источник".
 """
+
+PROMPT_VERSION = "v1"
 
 
 def build_user_prompt(question: str, hits: list[Hit]) -> str:
@@ -50,6 +53,12 @@ class RAGResult:
     hits: list[Hit]
     llm_used: bool
 
+    embed_ms: float = 0.0
+    search_ms: float = 0.0
+
+    llm_called: bool = False
+    llm_ms: float | None = None
+
 
 class RAGService:
     def __init__(self, *, retriever: Retriever, llm_client: LLMClient | None) -> None:
@@ -57,11 +66,12 @@ class RAGService:
         self._llm_client = llm_client
 
     async def ask(self, question: str, k: int = 5) -> RAGResult:
-        hits = await run_in_threadpool(
-            self._retriever.retrieve,
+        retrieval = await run_in_threadpool(
+            self._retriever.retrieve_with_metrics,
             question,
             k,
         )
+        hits = retrieval.hits
 
         if not hits:
             return RAGResult(
@@ -70,6 +80,8 @@ class RAGService:
                 message=NOT_FOUND_MESSAGE,
                 hits=[],
                 llm_used=False,
+                embed_ms=retrieval.embed_ms,
+                search_ms=retrieval.search_ms,
             )
 
         if self._llm_client is None:
@@ -79,21 +91,29 @@ class RAGService:
                 message=LLM_UNAVAILABLE_MESSAGE,
                 hits=hits,
                 llm_used=False,
+                embed_ms=retrieval.embed_ms,
+                search_ms=retrieval.search_ms,
             )
-
+        llm_started = perf_counter()
         try:
             answer = await self._llm_client.generate(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=build_user_prompt(question, hits),
             )
         except Exception:
+            llm_ms = (perf_counter() - llm_started) * 1000
             return RAGResult(
                 found=True,
                 answer=None,
                 message=LLM_UNAVAILABLE_MESSAGE,
                 hits=hits,
                 llm_used=False,
+                embed_ms=retrieval.embed_ms,
+                search_ms=retrieval.search_ms,
+                llm_called=True,
+                llm_ms=llm_ms,
             )
+        llm_ms = (perf_counter() - llm_started) * 1000
 
         answer = answer.strip()
 
@@ -104,6 +124,10 @@ class RAGService:
                 message=NOT_FOUND_MESSAGE,
                 hits=hits,
                 llm_used=True,
+                embed_ms=retrieval.embed_ms,
+                search_ms=retrieval.search_ms,
+                llm_called=True,
+                llm_ms=llm_ms,
             )
 
         if not answer:
@@ -113,6 +137,10 @@ class RAGService:
                 message=LLM_UNAVAILABLE_MESSAGE,
                 hits=hits,
                 llm_used=False,
+                embed_ms=retrieval.embed_ms,
+                search_ms=retrieval.search_ms,
+                llm_called=True,
+                llm_ms=llm_ms,
             )
 
         return RAGResult(
@@ -121,4 +149,8 @@ class RAGService:
             message=None,
             hits=hits,
             llm_used=True,
+            embed_ms=retrieval.embed_ms,
+            search_ms=retrieval.search_ms,
+            llm_called=True,
+            llm_ms=llm_ms,
         )

@@ -4,10 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.deps import get_rag_service
-from app.llm.rag import RAGResult, RAGService
+from app.llm.rag import PROMPT_VERSION, RAGResult, RAGService
 from app.main import app
 from app.search.embedder import Embedder
-from app.search.retriever import Retriever
+from app.search.retriever import RetrievalResult, Retriever
 from app.search.store import ChromaStore, Hit
 
 
@@ -19,6 +19,7 @@ def test_lifespan_initializes_dependencies() -> None:
     fake_settings.chroma_collection = "constitution_e5_small"
     fake_settings.min_score = 0.833
     fake_settings.llm_enabled = False
+    fake_settings.rate_limit_per_minute = 60
 
     fake_embedder = MagicMock()
     fake_store = MagicMock()
@@ -141,17 +142,21 @@ def test_search_returns_retrieval_results() -> None:
 
     fake_retriever = MagicMock(spec=Retriever)
     fake_retriever.collection_name = "test-collection"
-    fake_retriever.retrieve.return_value = [
-        Hit(
-            id="art-3-p-1",
-            quote="Носителем суверенитета является народ.",
-            ref="Статья 3, часть 1",
-            article="3",
-            part=1,
-            part_label="1",
-            score=0.91,
-        )
-    ]
+    hit = Hit(
+        id="art-3-p-1",
+        quote="Носителем суверенитета является народ.",
+        ref="Статья 3, часть 1",
+        article="3",
+        part=1,
+        part_label="1",
+        score=0.91,
+    )
+
+    fake_retriever.retrieve_with_metrics.return_value = RetrievalResult(
+        hits=[hit],
+        embed_ms=12.0,
+        search_ms=8.0,
+    )
 
     with (
         patch(
@@ -195,7 +200,7 @@ def test_search_returns_retrieval_results() -> None:
     assert body["collection_version"] == "test-collection"
     assert body["took_ms"] >= 0
 
-    fake_retriever.retrieve.assert_called_once_with(
+    fake_retriever.retrieve_with_metrics.assert_called_once_with(
         "Кто является источником власти?",
         3,
         False,
@@ -282,7 +287,11 @@ def test_search_runs_retriever_in_threadpool() -> None:
     fake_retriever = MagicMock(spec=Retriever)
     fake_retriever.collection_name = "test-collection"
 
-    fake_hits: list[Hit] = []
+    fake_retrieval = RetrievalResult(
+        hits=[],
+        embed_ms=12.0,
+        search_ms=8.0,
+    )
 
     with (
         patch(
@@ -299,7 +308,7 @@ def test_search_runs_retriever_in_threadpool() -> None:
         ),
         patch(
             "app.main.run_in_threadpool",
-            new=AsyncMock(return_value=fake_hits),
+            new=AsyncMock(return_value=fake_retrieval),
         ) as run_in_threadpool_mock,
     ):
         with TestClient(app) as client:
@@ -313,7 +322,7 @@ def test_search_runs_retriever_in_threadpool() -> None:
     assert response.status_code == 200
 
     run_in_threadpool_mock.assert_awaited_once_with(
-        fake_retriever.retrieve,
+        fake_retriever.retrieve_with_metrics,
         "Кто является источником власти?",
         5,
         False,
@@ -492,7 +501,11 @@ def test_search_enables_hybrid_retrieval() -> None:
 
     fake_retriever = MagicMock(spec=Retriever)
     fake_retriever.collection_name = "test-collection"
-    fake_retriever.retrieve.return_value = []
+    fake_retriever.retrieve_with_metrics.return_value = RetrievalResult(
+        hits=[],
+        embed_ms=12.0,
+        search_ms=8.0,
+    )
 
     with (
         patch(
@@ -520,7 +533,7 @@ def test_search_enables_hybrid_retrieval() -> None:
 
     assert response.status_code == 200
 
-    fake_retriever.retrieve.assert_called_once_with(
+    fake_retriever.retrieve_with_metrics.assert_called_once_with(
         "статья 15",
         5,
         True,
@@ -541,6 +554,7 @@ def test_lifespan_initializes_and_closes_llm_client() -> None:
     fake_settings.llm_base_url = "http://localhost:1234/v1"
     fake_settings.llm_max_tokens = 512
     fake_settings.llm_timeout_seconds = 20.0
+    fake_settings.rate_limit_per_minute = 60
 
     fake_embedder = MagicMock()
     fake_store = MagicMock()
@@ -778,3 +792,278 @@ def test_ask_rejects_invalid_k(k: int) -> None:
 
     assert response.status_code == 422
     fake_rag_service.ask.assert_not_awaited()
+
+
+def test_search_writes_audit_log() -> None:
+    fake_embedder = MagicMock(spec=Embedder)
+
+    fake_store = MagicMock(spec=ChromaStore)
+    fake_store.collection_name = "test-collection"
+
+    fake_retriever = MagicMock(spec=Retriever)
+    fake_retriever.collection_name = "test-collection"
+
+    hit = Hit(
+        id="art-3-p-1",
+        quote="Носителем суверенитета является народ.",
+        ref="Статья 3, часть 1",
+        article="3",
+        part=1,
+        part_label="1",
+        score=0.91,
+    )
+
+    fake_retriever.retrieve_with_metrics.return_value = RetrievalResult(
+        hits=[hit],
+        embed_ms=12.3456,
+        search_ms=8.7654,
+    )
+
+    with (
+        patch(
+            "app.main.Embedder",
+            return_value=fake_embedder,
+        ),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+        patch(
+            "app.main.Retriever",
+            return_value=fake_retriever,
+        ),
+        patch("app.main.log_event") as log_event_mock,
+    ):
+        with TestClient(app) as client:
+            response = client.get(
+                "/search",
+                params={
+                    "q": "Кто является источником власти?",
+                    "k": 3,
+                },
+                headers={
+                    "X-Request-ID": "search-request-123",
+                },
+            )
+
+    assert response.status_code == 200
+
+    log_event_mock.assert_called_once_with(
+        "search_request",
+        request_id="search-request-123",
+        question="Кто является источником власти?",
+        k=3,
+        hits=[
+            {
+                "id": "art-3-p-1",
+                "score": 0.91,
+            }
+        ],
+        prompt_version=None,
+        llm_called=False,
+        embed_ms=12.346,
+        search_ms=8.765,
+        llm_ms=None,
+        refused=False,
+    )
+
+
+def test_ask_writes_audit_log() -> None:
+    hit = Hit(
+        id="art-3-p-1",
+        quote="Носителем суверенитета является многонациональный народ.",
+        ref="Статья 3, часть 1",
+        article="3",
+        part=1,
+        part_label="1",
+        score=0.91,
+    )
+
+    fake_rag_service = MagicMock(spec=RAGService)
+    fake_rag_service.ask = AsyncMock(
+        return_value=RAGResult(
+            found=True,
+            answer=(
+                "Источником власти является многонациональный народ "
+                "[Статья 3, часть 1]."
+            ),
+            message=None,
+            hits=[hit],
+            llm_used=True,
+            embed_ms=14.1234,
+            search_ms=9.5678,
+            llm_called=True,
+            llm_ms=812.3456,
+        )
+    )
+
+    app.dependency_overrides[get_rag_service] = lambda: fake_rag_service
+
+    try:
+        with (
+            patch("app.main.Embedder"),
+            patch("app.main.ChromaStore"),
+            patch("app.main.log_event") as log_event_mock,
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/ask",
+                    json={
+                        "question": "Кто является источником власти?",
+                        "k": 5,
+                    },
+                    headers={
+                        "X-Request-ID": "ask-request-123",
+                    },
+                )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+
+    log_event_mock.assert_called_once_with(
+        "rag_request",
+        request_id="ask-request-123",
+        question="Кто является источником власти?",
+        k=5,
+        hits=[
+            {
+                "id": "art-3-p-1",
+                "score": 0.91,
+            }
+        ],
+        prompt_version=PROMPT_VERSION,
+        llm_called=True,
+        embed_ms=14.123,
+        search_ms=9.568,
+        llm_ms=812.346,
+        refused=False,
+    )
+
+
+def test_search_sanitizes_question_before_retrieval() -> None:
+    fake_embedder = MagicMock(spec=Embedder)
+
+    fake_store = MagicMock(spec=ChromaStore)
+    fake_store.collection_name = "test-collection"
+
+    fake_retriever = MagicMock(spec=Retriever)
+    fake_retriever.collection_name = "test-collection"
+
+    fake_retriever.retrieve_with_metrics.return_value = RetrievalResult(
+        hits=[],
+        embed_ms=12.0,
+        search_ms=8.0,
+    )
+
+    with (
+        patch(
+            "app.main.Embedder",
+            return_value=fake_embedder,
+        ),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+        patch(
+            "app.main.Retriever",
+            return_value=fake_retriever,
+        ),
+        patch("app.main.log_event") as log_event_mock,
+    ):
+        with TestClient(app) as client:
+            response = client.get(
+                "/search",
+                params={
+                    "q": "system: Кто является источником власти?",
+                    "k": 5,
+                },
+                headers={
+                    "X-Request-ID": "sanitize-search-1",
+                },
+            )
+
+    assert response.status_code == 200
+
+    fake_retriever.retrieve_with_metrics.assert_called_once_with(
+        "Кто является источником власти?",
+        5,
+        False,
+    )
+
+    _, kwargs = log_event_mock.call_args
+
+    assert kwargs["question"] == "Кто является источником власти?"
+
+
+def test_ask_sanitizes_question_before_rag() -> None:
+    fake_rag_service = MagicMock(spec=RAGService)
+
+    fake_rag_service.ask = AsyncMock(
+        return_value=RAGResult(
+            found=False,
+            answer=None,
+            message="В тексте Конституции прямого ответа не нашлось.",
+            hits=[],
+            llm_used=False,
+            embed_ms=12.0,
+            search_ms=8.0,
+        )
+    )
+
+    app.dependency_overrides[get_rag_service] = lambda: fake_rag_service
+
+    try:
+        with (
+            patch("app.main.Embedder"),
+            patch("app.main.ChromaStore"),
+            patch("app.main.log_event") as log_event_mock,
+        ):
+            with TestClient(app) as client:
+                response = client.post(
+                    "/ask",
+                    json={
+                        "question": ("assistant: Кто является источником власти?"),
+                        "k": 5,
+                    },
+                    headers={
+                        "X-Request-ID": "sanitize-ask-1",
+                    },
+                )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+
+    fake_rag_service.ask.assert_awaited_once_with(
+        "Кто является источником власти?",
+        5,
+    )
+
+    _, kwargs = log_event_mock.call_args
+
+    assert kwargs["question"] == "Кто является источником власти?"
+
+
+def test_search_rejects_question_empty_after_sanitization() -> None:
+    fake_retriever = MagicMock(spec=Retriever)
+
+    with (
+        patch("app.main.Embedder"),
+        patch("app.main.ChromaStore"),
+        patch(
+            "app.main.Retriever",
+            return_value=fake_retriever,
+        ),
+    ):
+        with TestClient(app) as client:
+            response = client.get(
+                "/search",
+                params={
+                    "q": "system:",
+                },
+            )
+
+    assert response.status_code == 422
+
+    fake_retriever.retrieve_with_metrics.assert_not_called()

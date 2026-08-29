@@ -1,7 +1,6 @@
 from app.schemas import (
     ArticleChunkResponse,
     ArticleResponse,
-    AskRequest,
     AskResponse,
     CitationResponse,
     SearchHitResponse,
