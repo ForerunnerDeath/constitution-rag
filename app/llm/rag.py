@@ -3,7 +3,8 @@ from time import perf_counter
 
 from starlette.concurrency import run_in_threadpool
 
-from app.llm.client import LLMClient
+from app.llm.client import LLMClient, LLMClientError
+from app.observability import log_event
 from app.search.retriever import Retriever
 from app.search.store import Hit
 
@@ -65,7 +66,9 @@ class RAGService:
         self._retriever = retriever
         self._llm_client = llm_client
 
-    async def ask(self, question: str, k: int = 5) -> RAGResult:
+    async def ask(
+        self, question: str, k: int = 5, *, request_id: str | None = None
+    ) -> RAGResult:
         retrieval = await run_in_threadpool(
             self._retriever.retrieve_with_metrics,
             question,
@@ -100,8 +103,17 @@ class RAGService:
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=build_user_prompt(question, hits),
             )
-        except Exception:
+        except LLMClientError as exc:
             llm_ms = (perf_counter() - llm_started) * 1000
+
+            log_event(
+                "llm_error",
+                request_id=request_id,
+                error_type=exc.error_type,
+                error=str(exc),
+                llm_ms=round(llm_ms, 3),
+            )
+
             return RAGResult(
                 found=True,
                 answer=None,

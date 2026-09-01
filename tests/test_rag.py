@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.llm.client import LLMClientError
 from app.llm.rag import (
     LLM_UNAVAILABLE_MESSAGE,
     NOT_FOUND_MESSAGE,
@@ -220,7 +221,12 @@ async def test_rag_returns_hits_when_llm_fails() -> None:
     retriever.retrieve_with_metrics.return_value = make_retrieval_result([hit])
 
     llm = MagicMock()
-    llm.generate = AsyncMock(side_effect=RuntimeError("LLM is unavailable"))
+    llm.generate = AsyncMock(
+        side_effect=LLMClientError(
+            "LLM is unavailable",
+            error_type="APIConnectionError",
+        )
+    )
 
     service = RAGService(
         retriever=retriever,
