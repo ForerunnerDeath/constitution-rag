@@ -1,3 +1,5 @@
+import gc
+import weakref
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -204,3 +206,41 @@ def test_model_name_returns_configured_model_name() -> None:
         embedder = Embedder("intfloat/multilingual-e5-small")
 
     assert embedder.model_name == "intfloat/multilingual-e5-small"
+
+
+def test_query_cache_does_not_keep_embedder_alive() -> None:
+    fake_embedding = np.array([0.1, 0.2, 0.3])
+
+    with patch("app.search.embedder.SentenceTransformer") as model_class:
+        model = MagicMock()
+        model.encode.return_value = fake_embedding
+        model_class.return_value = model
+
+        embedder = Embedder("intfloat/multilingual-e5-small")
+        embedder.embed_query("Уникальный вопрос для lifecycle test")
+
+        embedder_ref = weakref.ref(embedder)
+
+        del embedder
+        gc.collect()
+
+    assert embedder_ref() is None
+
+
+def test_query_cache_evicts_least_recently_used_entry() -> None:
+    with patch("app.search.embedder.SentenceTransformer") as model_class:
+        model = MagicMock()
+        model.encode.side_effect = [np.array([float(index)]) for index in range(258)]
+        model_class.return_value = model
+
+        embedder = Embedder("intfloat/multilingual-e5-small")
+
+        for index in range(256):
+            embedder.embed_query(f"question-{index}")
+
+        embedder.embed_query("question-0")
+        embedder.embed_query("question-256")
+
+        embedder.embed_query("question-1")
+
+    assert model.encode.call_count == 258
