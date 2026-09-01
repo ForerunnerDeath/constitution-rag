@@ -253,15 +253,27 @@ async def test_rag_returns_hits_when_llm_fails() -> None:
     assert result.llm_ms == pytest.approx(50.0)
 
 
+@pytest.mark.parametrize(
+    "llm_answer",
+    [
+        "NOT_FOUND",
+        "NOT_FOUND.",
+        "NOT_FOUND — недостаточно контекста",
+        '"NOT_FOUND"',
+        "«NOT_FOUND»",
+        "`NOT_FOUND`",
+        "**NOT_FOUND**",
+    ],
+)
 @pytest.mark.asyncio
-async def test_rag_handles_llm_not_found() -> None:
+async def test_rag_handles_llm_not_found(llm_answer: str) -> None:
     hit = make_hit()
 
     retriever = MagicMock(spec=Retriever)
     retriever.retrieve_with_metrics.return_value = make_retrieval_result([hit])
 
     llm = MagicMock()
-    llm.generate = AsyncMock(return_value="NOT_FOUND")
+    llm.generate = AsyncMock(return_value=llm_answer)
 
     service = RAGService(
         retriever=retriever,
@@ -292,3 +304,31 @@ async def test_rag_handles_llm_not_found() -> None:
 
     assert result.llm_called is True
     assert result.llm_ms == pytest.approx(40.0)
+
+
+@pytest.mark.asyncio
+async def test_rag_does_not_treat_not_found_inside_answer_as_refusal() -> None:
+    hit = make_hit()
+
+    retriever = MagicMock(spec=Retriever)
+    retriever.retrieve_with_metrics.return_value = make_retrieval_result([hit])
+
+    answer = "В ответе встречается маркер NOT_FOUND, но это обычный текст."
+
+    llm = MagicMock()
+    llm.generate = AsyncMock(return_value=answer)
+
+    service = RAGService(
+        retriever=retriever,
+        llm_client=llm,
+    )
+
+    result = await service.ask(
+        "Кто является источником власти?",
+    )
+
+    assert result.found is True
+    assert result.answer == answer
+    assert result.message is None
+    assert result.hits == [hit]
+    assert result.llm_used is True

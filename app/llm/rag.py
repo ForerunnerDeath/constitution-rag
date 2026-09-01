@@ -39,6 +39,15 @@ def build_user_prompt(question: str, hits: list[Hit]) -> str:
 
 NOT_FOUND_TOKEN = "NOT_FOUND"
 
+_NOT_FOUND_PREFIX_CHARS = " \t\r\n\"'`«»“”„.,:;!?—–-()[]{}*_~"
+
+
+def is_not_found_answer(answer: str) -> bool:
+    normalized = answer.strip().lstrip(_NOT_FOUND_PREFIX_CHARS)
+
+    return normalized.startswith(NOT_FOUND_TOKEN)
+
+
 NOT_FOUND_MESSAGE = "В тексте Конституции прямого ответа не нашлось."
 
 LLM_UNAVAILABLE_MESSAGE = (
@@ -129,7 +138,7 @@ class RAGService:
 
         answer = answer.strip()
 
-        if answer == NOT_FOUND_TOKEN:
+        if is_not_found_answer(answer):
             return RAGResult(
                 found=False,
                 answer=None,
