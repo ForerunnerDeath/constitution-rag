@@ -231,6 +231,17 @@ class ChromaStore:
     def count(self) -> int:
         return self.collection.count()
 
+    def get_ids(self) -> set[str]:
+        result = self.collection.get(include=[])
+
+        return set(result["ids"])
+
+    def delete_ids(self, ids: list[str]) -> None:
+        if not ids:
+            return
+
+        self.collection.delete(ids=ids)
+
     def ensure_embedding_compatibility(self, *, model_name: str, dim: int) -> None:
         stored = self.count()
         metadata = dict(self.collection.metadata or {})
