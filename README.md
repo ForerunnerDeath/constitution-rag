@@ -608,3 +608,84 @@ docker compose down -v
 ```bash
 docker compose down
 ```
+
+## Generation Evaluation
+
+Качество генерации оценивается отдельно от retrieval.
+
+Используются два набора:
+
+- `eval/generation_dev.csv` — development-набор для исследования поведения генерации;
+- `eval/generation_holdout.csv` — независимый набор для финальной проверки выбранной конфигурации.
+
+Generation evaluation запускает реальный `RAGService` с текущими Retriever,
+embedding-моделью, Chroma и настроенным LLM. Mock LLM для измерения качества
+генерации не используется.
+
+Для dev-набора:
+
+```bash
+python -m scripts.evaluate_generation \
+  --dataset eval/generation_dev.csv \
+  --output eval/generation_dev_results.json
+```
+
+Для независимого holdout:
+
+```bash
+python -m scripts.evaluate_generation \
+  --dataset eval/generation_holdout.csv \
+  --output eval/generation_holdout_results.json
+```
+
+JSON-отчёты являются локальными артефактами запусков и не хранятся в Git.
+
+### Автоматические метрики
+
+Evaluator считает:
+
+- **Citation presence rate** — долю сгенерированных ответов, содержащих ссылки;
+- **Citation validity / answer** — долю ответов, в которых все найденные ссылки соответствуют `ref` среди retrieved hits;
+- **Citation validity / reference** — долю отдельных ссылок, соответствующих `ref` среди retrieved hits.
+
+Автоматическая citation validity проверяет корректность ссылки относительно
+retrieved sources, но не доказывает, что конкретная ссылка действительно
+подтверждает утверждение, рядом с которым она поставлена.
+
+Groundedness поэтому оценивается отдельно вручную: каждое существенное
+утверждение ответа должно подтверждаться текстом в `hits[].quote`.
+
+### Frozen holdout baseline
+
+После исследования на `generation_dev` production prompt был возвращён к
+исходной версии `v1`. После этого конфигурация была заморожена и один раз
+проверена на ранее не использовавшемся `generation_holdout`.
+
+Конфигурация:
+
+```text
+embedding_model = intfloat/multilingual-e5-small
+min_score       = 0.833
+k               = 5
+llm_model       = qwen3:4b-instruct
+prompt_version  = v1
+```
+
+Результат на 20 holdout-вопросах:
+
+| Metric | Value |
+|---|---:|
+| Generated answers | 16 |
+| Groundedness | 14/16 = 87.5% |
+| Safe insufficient-context refusals | 4/4 = 100% |
+| Citation presence | 100% |
+| Citation-valid answers | 87.5% |
+| Valid citation references | 89.2% |
+
+Holdout не используется для последующей настройки prompt, retrieval threshold
+или других параметров.
+
+Ручная проверка показала, что основные оставшиеся ошибки возникают на сложных
+synthesis-вопросах: модель иногда слишком широко обобщает смысл retrieved
+фрагментов. Также валидная ссылка сама по себе не гарантирует semantic
+entailment конкретного утверждения.
