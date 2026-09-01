@@ -6,6 +6,7 @@ import pytest
 
 from app.ingest.chunker import Chunk
 from app.ingest.parser import Unit
+from app.search.store import ChromaStore
 from scripts.ingest import main, run_ingest
 
 
@@ -268,3 +269,143 @@ def test_main_passes_recreate_flag() -> None:
         embedding_model="test-model",
         recreate=True,
     )
+
+
+def test_run_ingest_removes_chunks_missing_from_new_snapshot(
+    tmp_path: Path,
+) -> None:
+    first_chunks = [
+        Chunk(
+            id="art-1-p-1",
+            embed_text="Статья 1, часть 1. Первый текст.",
+            quote="Первый текст.",
+            ref="Статья 1, часть 1",
+            chapter=1,
+            chapter_title="ТЕСТОВАЯ ГЛАВА",
+            article="1",
+            part=1,
+            part_label="1",
+            kind="article",
+        ),
+        Chunk(
+            id="art-1-p-2",
+            embed_text="Статья 1, часть 2. Устаревший текст.",
+            quote="Устаревший текст.",
+            ref="Статья 1, часть 2",
+            chapter=1,
+            chapter_title="ТЕСТОВАЯ ГЛАВА",
+            article="1",
+            part=2,
+            part_label="2",
+            kind="article",
+        ),
+    ]
+
+    second_chunks = [
+        first_chunks[0],
+        Chunk(
+            id="art-1-p-3",
+            embed_text="Статья 1, часть 3. Новый текст.",
+            quote="Новый текст.",
+            ref="Статья 1, часть 3",
+            chapter=1,
+            chapter_title="ТЕСТОВАЯ ГЛАВА",
+            article="1",
+            part=3,
+            part_label="3",
+            kind="article",
+        ),
+    ]
+
+    chroma_path = tmp_path / "chroma"
+    collection_name = "test-ingest-stale-chunks"
+
+    with (
+        patch(
+            "scripts.ingest.load_text",
+            return_value="Текст.",
+        ),
+        patch(
+            "scripts.ingest.parse_text",
+            return_value=[],
+        ),
+        patch(
+            "scripts.ingest.chunk_units",
+            side_effect=[
+                first_chunks,
+                second_chunks,
+            ],
+        ),
+        patch("scripts.ingest.Embedder") as embedder_class,
+    ):
+        embedder = MagicMock()
+        embedder.model_name = "test-model"
+        embedder.dim = 3
+        embedder.embed_passages.side_effect = [
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+        ]
+        embedder_class.return_value = embedder
+
+        run_ingest(
+            source_path=Path("constitution.txt"),
+            chroma_path=chroma_path,
+            collection_name=collection_name,
+            embedding_model="test-model",
+        )
+
+        run_ingest(
+            source_path=Path("constitution.txt"),
+            chroma_path=chroma_path,
+            collection_name=collection_name,
+            embedding_model="test-model",
+        )
+
+    store = ChromaStore(
+        path=chroma_path,
+        collection_name=collection_name,
+    )
+
+    assert {hit.id for hit in store.get_all()} == {
+        "art-1-p-1",
+        "art-1-p-3",
+    }
+
+
+def test_main_warns_when_stored_count_differs_from_chunks(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = SimpleNamespace(
+        source_path=Path("constitution.txt"),
+        chroma_path=Path("chroma"),
+        chroma_collection="test-collection",
+        embedding_model="test-model",
+    )
+
+    with (
+        patch(
+            "scripts.ingest.get_settings",
+            return_value=settings,
+        ),
+        patch(
+            "scripts.ingest.run_ingest",
+            return_value={
+                "units": 384,
+                "chunks": 383,
+                "vectors": 383,
+                "stored": 384,
+            },
+        ),
+    ):
+        main([])
+
+    output = capsys.readouterr().out
+
+    assert "WARNING" in output
+    assert "384 != 383" in output

@@ -36,6 +36,13 @@ def run_ingest(
 
     store.upsert(chunks, vectors)
 
+    new_ids = {chunk.id for chunk in chunks}
+    stored_ids = store.get_ids()
+
+    stale_ids = stored_ids - new_ids
+
+    store.delete_ids(sorted(stale_ids))
+
     stored = store.count()
 
     return {
@@ -71,6 +78,11 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Chunks: {stats['chunks']}")
     print(f"Vectors: {stats['vectors']}")
     print(f"Stored: {stats['stored']}")
+    if stats["stored"] != stats["chunks"]:
+        print(
+            "WARNING: stored chunk count does not match generated chunk count "
+            f"({stats['stored']} != {stats['chunks']})"
+        )
 
 
 if __name__ == "__main__":
