@@ -125,6 +125,55 @@ Raw TOP-1 vector scores:
 
 Выбран `min_score=0.833`: он даёт 100% refusal accuracy без false refusals и сохраняет Recall@5 на уровне 0.960.
 
+### Relative relevance gate experiment
+
+Дополнительно была проверена гипотеза о замене абсолютного cosine threshold
+относительным relevance-критерием.
+
+На `eval/dev.csv` сравнивались:
+
+1. абсолютный TOP-1 cosine score;
+2. margin между двумя лучшими результатами: `TOP-1 - TOP-2`;
+3. z-score TOP-1 относительно распределения cosine scores по всему корпусу.
+
+Полученные распределения:
+
+| Signal | Positive min | Positive median | Positive max | Negative min | Negative median | Negative max |
+|---|---:|---:|---:|---:|---:|---:|
+| TOP-1 cosine | 0.8365 | 0.8663 | 0.9149 | 0.7324 | 0.7807 | 0.8327 |
+| TOP1-TOP2 margin | 0.0010 | 0.0150 | 0.0547 | 0.0002 | 0.0096 | 0.0190 |
+| TOP-1 z-score | 2.7318 | 4.1776 | 6.2747 | 2.5597 | 3.8494 | 5.5486 |
+
+На текущем dev-наборе абсолютный TOP-1 cosine score полностью разделяет
+positive и negative запросы:
+
+```text
+max negative = 0.8327
+min positive = 0.8365
+```
+
+Для относительных критериев распределения существенно пересекаются.
+
+Для `TOP1-TOP2 margin` threshold, отсекающий все negative-запросы,
+привёл бы примерно к `64%` false refusals среди positive-запросов.
+
+Для TOP-1 z-score аналогичный threshold привёл бы примерно к `88%`
+false refusals.
+
+Поэтому относительные relevance gates не показали преимущества над
+откалиброванным абсолютным cosine threshold и не были добавлены в
+production Retriever.
+
+Текущий relevance gate остаётся:
+
+```text
+TOP-1 cosine score >= min_score
+min_score = 0.833
+```
+
+Эксперимент выполнялся только на `dev`; holdout не использовался для
+подбора относительного threshold.
+
 ### Vector vs Hybrid
 
 При baseline threshold `0.80`:
