@@ -100,3 +100,30 @@ def test_rate_limiter_rejects_invalid_configuration(
             max_requests=max_requests,
             window_seconds=window_seconds,
         )
+
+
+def test_rate_limiter_removes_stale_clients_during_cleanup() -> None:
+    limiter = RateLimiter(
+        max_requests=2,
+        window_seconds=60,
+    )
+
+    with patch(
+        "app.rate_limit.perf_counter",
+        side_effect=[
+            10.0,
+            20.0,
+            71.0,
+        ],
+    ):
+        assert limiter.allow("client-a") is True
+        assert limiter.allow("client-b") is True
+
+        assert "client-a" in limiter._requests
+        assert "client-b" in limiter._requests
+
+        assert limiter.allow("client-c") is True
+
+    assert "client-a" not in limiter._requests
+    assert "client-b" in limiter._requests
+    assert "client-c" in limiter._requests
