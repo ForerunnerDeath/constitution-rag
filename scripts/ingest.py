@@ -3,7 +3,7 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.ingest.chunker import chunk_units
-from app.ingest.loader import load_text
+from app.ingest.loader import calculate_checksum, load_text
 from app.ingest.parser import parse_text
 from app.search.embedder import Embedder
 from app.search.store import ChromaStore
@@ -17,6 +17,7 @@ def run_ingest(
     embedding_model: str,
     recreate: bool = False,
 ) -> dict[str, int]:
+    source_checksum = calculate_checksum(source_path)
     text = load_text(source_path)
     units = parse_text(text)
     chunks = chunk_units(units)
@@ -34,6 +35,7 @@ def run_ingest(
 
     vectors = embedder.embed_passages([chunk.embed_text for chunk in chunks])
 
+    store.clear_corpus_checksum()
     store.upsert(chunks, vectors)
 
     new_ids = {chunk.id for chunk in chunks}
@@ -44,6 +46,9 @@ def run_ingest(
     store.delete_ids(sorted(stale_ids))
 
     stored = store.count()
+
+    if stored == len(chunks):
+        store.set_corpus_checksum(source_checksum)
 
     return {
         "units": len(units),

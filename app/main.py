@@ -47,6 +47,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         dim=app.state.embedder.dim,
     )
 
+    app.state.store.ensure_corpus_compatibility(settings.source_path)
+
     app.state.lexical_index = LexicalIndex(app.state.store.get_all())
 
     app.state.retriever = Retriever(

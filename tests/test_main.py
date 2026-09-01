@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,6 +26,7 @@ def test_lifespan_initializes_dependencies() -> None:
     fake_settings.min_score = 0.833
     fake_settings.llm_enabled = False
     fake_settings.rate_limit_per_minute = 60
+    fake_settings.source_path = Path("data/raw/constitution.txt")
 
     fake_embedder = MagicMock()
     fake_embedder.model_name = "intfloat/multilingual-e5-small"
@@ -76,6 +78,10 @@ def test_lifespan_initializes_dependencies() -> None:
     fake_store.ensure_embedding_compatibility.assert_called_once_with(
         model_name="intfloat/multilingual-e5-small",
         dim=384,
+    )
+
+    fake_store.ensure_corpus_compatibility.assert_called_once_with(
+        Path("data/raw/constitution.txt")
     )
 
     fake_store.get_all.assert_called_once_with()
@@ -1140,3 +1146,55 @@ def test_lifespan_fails_fast_on_embedding_mismatch() -> None:
     fake_store.get_all.assert_not_called()
     lexical_index_class.assert_not_called()
     retriever_class.assert_not_called()
+
+
+def test_lifespan_rejects_stale_corpus_before_loading_index() -> None:
+    fake_settings = MagicMock()
+    fake_settings.embedding_model = "intfloat/multilingual-e5-small"
+    fake_settings.chroma_path = "data/chroma"
+    fake_settings.chroma_collection = "constitution_e5_small"
+    fake_settings.source_path = Path("data/raw/constitution.txt")
+    fake_settings.rate_limit_per_minute = 60
+
+    fake_embedder = MagicMock()
+    fake_embedder.model_name = "intfloat/multilingual-e5-small"
+    fake_embedder.dim = 384
+
+    fake_store = MagicMock()
+    fake_store.ensure_corpus_compatibility.side_effect = RuntimeError(
+        "corpus checksum mismatch"
+    )
+
+    with (
+        patch(
+            "app.main.get_settings",
+            return_value=fake_settings,
+        ),
+        patch(
+            "app.main.Embedder",
+            return_value=fake_embedder,
+        ),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+        patch("app.main.LexicalIndex") as lexical_index_class,
+    ):
+        with pytest.raises(
+            RuntimeError,
+            match="corpus checksum mismatch",
+        ):
+            with TestClient(app):
+                pass
+
+    fake_store.ensure_embedding_compatibility.assert_called_once_with(
+        model_name="intfloat/multilingual-e5-small",
+        dim=384,
+    )
+
+    fake_store.ensure_corpus_compatibility.assert_called_once_with(
+        Path("data/raw/constitution.txt")
+    )
+
+    fake_store.get_all.assert_not_called()
+    lexical_index_class.assert_not_called()

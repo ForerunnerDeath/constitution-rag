@@ -6,6 +6,7 @@ import numpy as np
 from chromadb import Metadata, Where
 
 from app.ingest.chunker import Chunk
+from app.ingest.loader import calculate_checksum
 
 
 @dataclass(frozen=True)
@@ -235,6 +236,50 @@ class ChromaStore:
         result = self.collection.get(include=[])
 
         return set(result["ids"])
+
+    def get_corpus_checksum(self) -> str | None:
+        metadata = dict(self.collection.metadata or {})
+        checksum = metadata.get("corpus_checksum")
+
+        if checksum is None:
+            return None
+
+        if not isinstance(checksum, str):
+            raise RuntimeError("Chroma collection has invalid corpus checksum metadata")
+
+        return checksum
+
+    def set_corpus_checksum(self, checksum: str) -> None:
+        metadata = dict(self.collection.metadata or {})
+        metadata["corpus_checksum"] = checksum
+
+        self.collection.modify(metadata=metadata)
+
+    def clear_corpus_checksum(self) -> None:
+        metadata = dict(self.collection.metadata or {})
+        metadata.pop("corpus_checksum", None)
+
+        self.collection.modify(metadata=metadata)
+
+    def ensure_corpus_compatibility(self, source_path: Path) -> None:
+        if self.count() == 0:
+            return
+
+        stored_checksum = self.get_corpus_checksum()
+
+        if stored_checksum is None:
+            raise RuntimeError(
+                "Chroma collection has no corpus checksum metadata; "
+                "run ingest to rebuild the index"
+            )
+
+        source_checksum = calculate_checksum(source_path)
+
+        if stored_checksum != source_checksum:
+            raise RuntimeError(
+                "corpus checksum mismatch: source corpus differs from indexed corpus; "
+                "run ingest to rebuild the index"
+            )
 
     def delete_ids(self, ids: list[str]) -> None:
         if not ids:
