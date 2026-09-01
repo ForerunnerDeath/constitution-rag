@@ -1,9 +1,10 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scripts.evaluate import build_components
+from scripts.evaluate import build_components, load_questions
 
 
 def test_build_components_checks_embedding_compatibility() -> None:
@@ -121,3 +122,20 @@ def test_build_components_fails_fast_on_embedding_mismatch() -> None:
     fake_store.get_all.assert_not_called()
     lexical_index_class.assert_not_called()
     retriever_class.assert_not_called()
+
+
+def test_load_questions_reads_requested_dataset(tmp_path: Path) -> None:
+    dataset = tmp_path / "questions.csv"
+    dataset.write_text(
+        "question,expected_article\n"
+        "Есть ли право на жилище?,40\n"
+        "Какова ставка НДС?,NONE\n",
+        encoding="utf-8",
+    )
+
+    questions = load_questions(dataset)
+
+    assert questions == [
+        ("Есть ли право на жилище?", "40"),
+        ("Какова ставка НДС?", "NONE"),
+    ]
