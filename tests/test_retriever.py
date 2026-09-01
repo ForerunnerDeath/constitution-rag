@@ -454,3 +454,85 @@ def test_retrieve_with_metrics_returns_timings_when_no_hits_found() -> None:
     assert result.hits == []
     assert result.embed_ms == pytest.approx(10.0)
     assert result.search_ms == pytest.approx(20.0)
+
+
+def test_retrieve_uses_min_score_as_query_level_gate() -> None:
+    embedder = MagicMock(spec=Embedder)
+    store = MagicMock(spec=ChromaStore)
+
+    embedder.embed_query.return_value = [0.1, 0.2]
+
+    store.search.return_value = [
+        _make_hit(hit_id="a", score=0.90),
+        _make_hit(hit_id="b", score=0.82),
+    ]
+
+    retriever = Retriever(
+        embedder=embedder,
+        store=store,
+        min_score=0.833,
+        candidate_k=20,
+    )
+
+    hits = retriever.retrieve(
+        "Тестовый вопрос",
+        k=2,
+    )
+
+    assert [hit.id for hit in hits] == [
+        "a",
+        "b",
+    ]
+
+
+def test_hybrid_keeps_vector_candidate_below_query_threshold_after_gate_passes() -> (
+    None
+):
+    embedder = MagicMock(spec=Embedder)
+    store = MagicMock(spec=ChromaStore)
+    lexical_index = MagicMock(spec=LexicalIndex)
+
+    embedder.embed_query.return_value = [0.1, 0.2]
+
+    vector_top = _make_hit(
+        hit_id="a",
+        score=0.90,
+    )
+    vector_below_threshold = _make_hit(
+        hit_id="b",
+        score=0.82,
+    )
+
+    store.search.return_value = [
+        vector_top,
+        vector_below_threshold,
+    ]
+
+    lexical_index.search.return_value = [
+        LexicalHit(
+            hit=_make_hit(
+                hit_id="b",
+                score=None,
+            ),
+            score=10.0,
+        )
+    ]
+
+    retriever = Retriever(
+        embedder=embedder,
+        store=store,
+        lexical_index=lexical_index,
+        min_score=0.833,
+        candidate_k=20,
+    )
+
+    hits = retriever.retrieve(
+        "Тестовый вопрос",
+        k=2,
+        use_hybrid=True,
+    )
+
+    assert [hit.id for hit in hits] == [
+        "b",
+        "a",
+    ]
