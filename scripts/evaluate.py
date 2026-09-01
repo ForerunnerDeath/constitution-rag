@@ -12,7 +12,7 @@ from app.search.lexical import LexicalIndex
 from app.search.retriever import Retriever
 from app.search.store import ChromaStore
 
-QUESTIONS_PATH = Path("eval/questions.csv")
+DEFAULT_DATASET_PATH = Path("eval/dev.csv")
 
 
 @dataclass(frozen=True)
@@ -41,10 +41,10 @@ class EvaluationResult:
     negative_count: int
 
 
-def load_questions() -> list[tuple[str, str]]:
+def load_questions(path: Path) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
 
-    with QUESTIONS_PATH.open("r", encoding="utf-8-sig", newline="") as file:
+    with path.open("r", encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
 
         required_columns = {"question", "expected_article"}
@@ -239,13 +239,20 @@ def main(argv: list[str] | None = None) -> None:
         help="Evaluate hybrid vector + BM25 retrieval.",
     )
 
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=DEFAULT_DATASET_PATH,
+        help="Evaluation dataset CSV path.",
+    )
+
     args = parser.parse_args(argv)
 
     settings = get_settings()
 
     min_score = args.min_score if args.min_score is not None else settings.min_score
 
-    questions = load_questions()
+    questions = load_questions(args.dataset)
 
     retriever, embedder, store = build_components(min_score=min_score)
 
@@ -254,6 +261,7 @@ def main(argv: list[str] | None = None) -> None:
     metrics = result.metrics
 
     print("Evaluation configuration:")
+    print(f"Dataset:         {args.dataset}")
     print(f"Questions:       {len(questions)}")
     print(f"Positive:        {result.positive_count}")
     print(f"Negative:        {result.negative_count}")

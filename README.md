@@ -20,34 +20,48 @@ RAG-сервис на FastAPI для поиска точных цитат из �
 
 ## Retrieval Evaluation
 
-Качество retrieval оценивается на фиксированном golden dataset:
+Evaluation разделена на два независимых набора:
 
-- 40 вопросов всего;
-- 25 позитивных вопросов с ожидаемой статьёй Конституции;
-- 15 негативных вопросов, для которых ожидается пустая выдача.
+- `eval/dev.csv` — 40 вопросов: 25 positive и 15 negative;
+- `eval/holdout.csv` — 40 новых вопросов: 20 positive и 20 negative.
 
-Dataset находится в:
+`dev` используется для разработки и выбора retrieval-конфигурации:
 
-```text
-eval/questions.csv
-```
+- подбора `min_score`;
+- сравнения embedding-моделей;
+- выбора размера chunk;
+- проверки header prefix;
+- сравнения vector и hybrid retrieval.
 
-Для оценки используется:
+Изначальный golden dataset проекта стал `dev`, поскольку результаты экспериментов по нему уже были известны.
+
+`holdout` был составлен после выбора финальной retrieval-конфигурации и не использовался для подбора `min_score` или других параметров. Он применяется только для независимой проверки переноса выбранной конфигурации на новые вопросы.
+
+Для оценки dev-набора используется:
 
 ```bash
-python -m scripts.evaluate
+python -m scripts.evaluate --dataset eval/dev.csv
 ```
 
 Можно переопределить retrieval threshold:
 
 ```bash
-python -m scripts.evaluate --min-score 0.833
+python -m scripts.evaluate --dataset eval/dev.csv --min-score 0.833
 ```
 
 И отдельно проверить hybrid retrieval:
 
 ```bash
-python -m scripts.evaluate --min-score 0.833 --hybrid
+python -m scripts.evaluate --dataset eval/dev.csv --min-score 0.833 --hybrid
+```
+
+Для независимой финальной оценки используется:
+
+```bash
+python -m scripts.evaluate --dataset eval/holdout.csv
+```
+
+После первого прогона `holdout` его результаты не использовались для повторной настройки `min_score`.
 ```
 
 ### Метрики
@@ -59,6 +73,8 @@ python -m scripts.evaluate --min-score 0.833 --hybrid
 - **Refusal accuracy** — доля негативных вопросов, для которых Retriever корректно вернул пустую выдачу;
 - **False refusal** — доля позитивных вопросов, для которых Retriever ошибочно вернул пустую выдачу;
 - **Raw TOP-1 score distribution** — min / median / max cosine score до применения threshold отдельно для позитивных и негативных вопросов.
+
+Все эксперименты ниже выполнялись на `eval/dev.csv`. Этот набор используется для настройки и сравнения retrieval-конфигураций, поэтому полученные на нём значения являются dev/in-sample метриками, а не независимой финальной оценкой качества.
 
 ### Baseline
 
@@ -229,22 +245,80 @@ header prefix   = ON
 use_hybrid      = false
 ```
 
-Финальные метрики:
+### Dev-метрики выбранной конфигурации
+
+На `eval/dev.csv` выбранная конфигурация показывает:
 
 | Metric | Value |
 |---|---:|
 | Recall@1 | 0.880 |
 | Recall@3 | 0.920 |
-| Recall@5 | **0.960** |
+| Recall@5 | 0.960 |
 | MRR | 0.910 |
-| Refusal accuracy | **1.000** |
-| False refusal | **0.000** |
+| Refusal accuracy | 1.000 |
+| False refusal | 0.000 |
 
-Таким образом, выполняются критерии качества проекта:
+Raw TOP-1 cosine scores:
+
+| Class | Min | Median | Max |
+|---|---:|---:|---:|
+| Positive | 0.8365 | 0.8663 | 0.9149 |
+| Negative | 0.7324 | 0.7807 | 0.8327 |
+
+На dev-наборе threshold `0.833` полностью разделяет positive и negative запросы.
+
+### Финальная holdout evaluation
+
+После выбора retrieval-конфигурации был выполнен независимый прогон на `eval/holdout.csv`.
+
+До этого прогона holdout-вопросы не использовались для настройки `min_score`, выбора модели, chunk size, header prefix или режима retrieval.
+
+Результат первого holdout-прогона:
+
+| Metric | Value |
+|---|---:|
+| Recall@1 | 0.950 |
+| Recall@3 | 0.950 |
+| Recall@5 | 1.000 |
+| MRR | 0.963 |
+| Refusal accuracy | 0.900 |
+| False refusal | 0.000 |
+
+Raw TOP-1 cosine scores:
+
+| Class | Min | Median | Max |
+|---|---:|---:|---:|
+| Positive | 0.8583 | 0.8904 | 0.9079 |
+| Negative | 0.7892 | 0.8136 | 0.8685 |
+
+На holdout-наборе распределения positive и negative scores уже пересекаются:
 
 ```text
-Recall@5 >= 0.85
-Refusal accuracy = 100%
+min positive = 0.8583
+max negative = 0.8685
+```
+
+При текущем `min_score=0.833` все 20 positive-вопросов проходят threshold, но 2 из 20 negative-вопросов также получают непустую выдачу:
+
+```text
+Refusal accuracy = 18 / 20 = 0.900
+False refusal    = 0 / 20  = 0.000
+```
+
+Таким образом, прежний результат `Refusal accuracy = 1.000` корректно описывает dev-набор, на котором подбирался threshold, но не должен трактоваться как независимая оценка качества на новых запросах.
+
+После получения holdout-результатов `min_score=0.833` по этому набору не перенастраивался.
+
+Независимая holdout-оценка подтверждает высокий retrieval recall:
+
+```text
+Recall@5 = 1.000
+```
+
+и одновременно показывает ограничение текущего абсолютного cosine threshold на более сложных negative-запросах:
+
+```text
+Refusal accuracy = 0.900
 ```
 
 
