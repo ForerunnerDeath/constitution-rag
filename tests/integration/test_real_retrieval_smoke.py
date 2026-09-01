@@ -7,21 +7,8 @@ from app.ingest.chunker import Chunk
 from app.search.embedder import Embedder
 from app.search.store import ChromaStore
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        os.getenv("RUN_INTEGRATION") != "1",
-        reason="Set RUN_INTEGRATION=1 to run real dependency integration tests",
-    ),
-]
 
-
-def _chunk(
-    *,
-    chunk_id: str,
-    article: str,
-    quote: str,
-) -> Chunk:
+def _chunk(*, chunk_id: str, article: str, quote: str) -> Chunk:
     ref = f"Статья {article}"
 
     return Chunk(
@@ -38,6 +25,11 @@ def _chunk(
     )
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.getenv("RUN_INTEGRATION") != "1",
+    reason="Set RUN_INTEGRATION=1 to run real dependency integration tests",
+)
 def test_real_embedder_and_chroma_retrieval(tmp_path: Path) -> None:
     chunks = [
         _chunk(
