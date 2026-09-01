@@ -1,7 +1,9 @@
-from functools import lru_cache
+from collections import OrderedDict
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
+
+_QUERY_CACHE_SIZE = 256
 
 
 class Embedder:
@@ -9,6 +11,7 @@ class Embedder:
         self._model_name = model_name
         self.model = SentenceTransformer(model_name)
         self._uses_e5_prefixes = self._is_e5_model(model_name)
+        self._query_cache: OrderedDict[str, tuple[float, ...]] = OrderedDict()
 
     @property
     def model_name(self) -> str:
@@ -30,10 +33,22 @@ class Embedder:
         return dimension
 
     def embed_query(self, text: str) -> list[float]:
-        return list(self._embed_query_cached(text))
+        cached = self._query_cache.get(text)
 
-    @lru_cache(maxsize=256)
-    def _embed_query_cached(self, text: str) -> tuple[float, ...]:
+        if cached is not None:
+            self._query_cache.move_to_end(text)
+            return list(cached)
+
+        embedding = self._embed_query_uncached(text)
+
+        self._query_cache[text] = embedding
+
+        if len(self._query_cache) > _QUERY_CACHE_SIZE:
+            self._query_cache.popitem(last=False)
+
+        return list(embedding)
+
+    def _embed_query_uncached(self, text: str) -> tuple[float, ...]:
         input_text = f"query: {text}" if self._uses_e5_prefixes else text
 
         embedding: np.ndarray = self.model.encode(  # pyright: ignore[reportUnknownMemberType]
