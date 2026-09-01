@@ -14,9 +14,11 @@ class RateLimiter:
         self.window_seconds = window_seconds
 
         self._requests: dict[str, deque[float]] = defaultdict(deque)
+        self._last_cleanup = 0.0
 
     def allow(self, client_id: str) -> bool:
         now = perf_counter()
+        self._cleanup_stale_clients(now)
 
         requests = self._requests[client_id]
 
@@ -31,3 +33,18 @@ class RateLimiter:
         requests.append(now)
 
         return True
+
+    def _cleanup_stale_clients(self, now: float) -> None:
+        if now - self._last_cleanup < self.window_seconds:
+            return
+
+        window_start = now - self.window_seconds
+
+        for client_id, requests in list(self._requests.items()):
+            while requests and requests[0] <= window_start:
+                requests.popleft()
+
+            if not requests:
+                del self._requests[client_id]
+
+        self._last_cleanup = now
