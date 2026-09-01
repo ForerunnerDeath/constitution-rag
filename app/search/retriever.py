@@ -118,20 +118,20 @@ class Retriever:
             )
         )
 
-        relevant_vector_hits: list[Hit] = []
-
         for hit in vector_candidates:
             if hit.score is None:
                 raise RuntimeError("Vector search hit must have cosine score")
 
-            if hit.score >= self.min_score:
-                relevant_vector_hits.append(hit)
+        top_score = vector_candidates[0].score if vector_candidates else None
 
-        if not relevant_vector_hits:
+        if top_score is None:
             hits: list[Hit] = []
 
+        elif top_score < self.min_score:
+            hits = []
+
         elif not use_hybrid:
-            hits = relevant_vector_hits[:k]
+            hits = vector_candidates[:k]
 
         else:
             if self.lexical_index is None:
@@ -143,7 +143,7 @@ class Retriever:
             )
 
             fused_hits = reciprocal_rank_fusion(
-                relevant_vector_hits,
+                vector_candidates,
                 lexical_candidates,
             )
 

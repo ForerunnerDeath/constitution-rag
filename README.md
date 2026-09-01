@@ -187,12 +187,30 @@ min_score = 0.833
 
 | Mode | Recall@1 | Recall@3 | Recall@5 | MRR | Refusal accuracy | False refusal |
 |---|---:|---:|---:|---:|---:|---:|
-| Vector | 0.880 | 0.920 | 0.960 | 0.910 | 1.000 | 0.000 |
-| Hybrid | 0.880 | 0.960 | 0.960 | 0.913 | 1.000 | 0.000 |
+| Vector | 0.880 | 0.920 | 1.000 | 0.920 | 1.000 | 0.000 |
+| Hybrid | 0.880 | 1.000 | 1.000 | 0.920 | 1.000 | 0.000 |
 
-Hybrid немного улучшает Recall@3 и MRR, но не меняет ключевые Recall@5 и refusal accuracy.
+Hybrid улучшает Recall@3 на текущем dev-наборе, при этом Recall@5,
+refusal accuracy и false refusal не ухудшаются.
 
-Поэтому vector retrieval остаётся default, а hybrid доступен как дополнительный режим.
+`min_score` используется как query-level relevance gate: после vector search
+проверяется cosine score лучшего (TOP-1) кандидата. Если TOP-1 ниже
+`min_score`, Retriever возвращает пустую выдачу и BM25 не запускается.
+Если TOP-1 проходит порог, остальные vector-кандидаты не фильтруются тем же
+`min_score`.
+
+В hybrid-режиме после успешного relevance gate RRF объединяет два независимых
+candidate pool: vector и BM25. Поэтому итоговая выдача может содержать
+lexical-only hit, которого не было среди vector-кандидатов. Это намеренное
+поведение: BM25 должен иметь возможность находить кандидатов, пропущенных
+семантическим поиском, а не только переставлять уже найденные vector hits.
+
+Для lexical-only hit поле `score` может быть `None`, поскольку `score`
+представляет cosine similarity из vector search, а для такого документа
+cosine score не вычислялся. RRF score используется для hybrid ranking
+отдельно и намеренно не подменяет значение cosine `score`.
+
+Vector retrieval остаётся default, а hybrid доступен как дополнительный режим.
 
 ### Header prefix experiment
 
@@ -302,8 +320,8 @@ use_hybrid      = false
 |---|---:|
 | Recall@1 | 0.880 |
 | Recall@3 | 0.920 |
-| Recall@5 | 0.960 |
-| MRR | 0.910 |
+| Recall@5 | 1.000 |
+| MRR | 0.920 |
 | Refusal accuracy | 1.000 |
 | False refusal | 0.000 |
 
