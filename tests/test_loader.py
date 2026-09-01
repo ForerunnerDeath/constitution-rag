@@ -1,6 +1,11 @@
+from hashlib import sha256
 from pathlib import Path
 
-from app.ingest.loader import load_text, normalize_text
+from app.ingest.loader import (
+    calculate_checksum,
+    load_text,
+    normalize_text,
+)
 
 
 def test_normalize_special_characters() -> None:
@@ -39,3 +44,12 @@ def test_load_text(tmp_path: Path) -> None:
     result = load_text(path)
 
     assert result == "Статья 1"
+
+
+def test_calculate_checksum(tmp_path: Path) -> None:
+    path = tmp_path / "constitution.txt"
+    path.write_bytes(b"constitution")
+
+    result = calculate_checksum(path)
+
+    assert result == sha256(b"constitution").hexdigest()

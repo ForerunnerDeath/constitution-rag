@@ -160,3 +160,15 @@ class Retriever:
     @property
     def collection_name(self) -> str:
         return self.store.collection_name
+
+    @property
+    def index_revision(self) -> str:
+        revision = self.store.get_index_revision()
+
+        if revision is None:
+            raise RuntimeError(
+                "Chroma collection has no index revision metadata; "
+                "run ingest to rebuild the index"
+            )
+
+        return revision

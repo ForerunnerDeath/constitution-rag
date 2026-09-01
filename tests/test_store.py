@@ -839,3 +839,280 @@ def test_embedding_compatibility_rejects_legacy_non_empty_collection() -> None:
             )
 
     collection.modify.assert_not_called()
+
+
+def test_get_corpus_checksum_returns_stored_value() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.metadata = {
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+            "corpus_checksum": "a" * 64,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        result = store.get_corpus_checksum()
+
+    assert result == "a" * 64
+
+
+def test_set_corpus_checksum_preserves_existing_metadata() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.metadata = {
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        store.set_corpus_checksum("b" * 64)
+
+    collection.modify.assert_called_once_with(
+        metadata={
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+            "corpus_checksum": "b" * 64,
+        }
+    )
+
+
+def test_ensure_corpus_compatibility_rejects_changed_source() -> None:
+    with (
+        patch("app.search.store.chromadb.PersistentClient") as client_class,
+        patch(
+            "app.search.store.calculate_checksum",
+            return_value="b" * 64,
+        ),
+    ):
+        client = MagicMock()
+        collection = MagicMock()
+
+        collection.count.return_value = 383
+        collection.metadata = {
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+            "corpus_checksum": "a" * 64,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="corpus checksum mismatch",
+        ):
+            store.ensure_corpus_compatibility(Path("constitution.txt"))
+
+
+def test_ensure_corpus_compatibility_accepts_matching_source() -> None:
+    with (
+        patch("app.search.store.chromadb.PersistentClient") as client_class,
+        patch(
+            "app.search.store.calculate_checksum",
+            return_value="a" * 64,
+        ),
+    ):
+        client = MagicMock()
+        collection = MagicMock()
+
+        collection.count.return_value = 383
+        collection.metadata = {
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+            "corpus_checksum": "a" * 64,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        store.ensure_corpus_compatibility(Path("constitution.txt"))
+
+
+def test_ensure_corpus_compatibility_rejects_missing_checksum() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+
+        collection.count.return_value = 383
+        collection.metadata = {
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="no corpus checksum metadata",
+        ):
+            store.ensure_corpus_compatibility(Path("constitution.txt"))
+
+
+def test_clear_corpus_checksum_preserves_other_metadata() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.metadata = {
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+            "corpus_checksum": "a" * 64,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        store.clear_corpus_checksum()
+
+    collection.modify.assert_called_once_with(
+        metadata={
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+        }
+    )
+
+
+def test_get_index_revision_returns_stored_value() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.metadata = {
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+            "corpus_checksum": "a" * 64,
+            "index_revision": "b" * 64,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        result = store.get_index_revision()
+
+    assert result == "b" * 64
+
+
+def test_set_index_revision_preserves_existing_metadata() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.metadata = {
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+            "corpus_checksum": "a" * 64,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        store.set_index_revision("b" * 64)
+
+    collection.modify.assert_called_once_with(
+        metadata={
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+            "corpus_checksum": "a" * 64,
+            "index_revision": "b" * 64,
+        }
+    )
+
+
+def test_clear_index_revision_preserves_other_metadata() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.metadata = {
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+            "corpus_checksum": "a" * 64,
+            "index_revision": "b" * 64,
+        }
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        store.clear_index_revision()
+
+    collection.modify.assert_called_once_with(
+        metadata={
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+            "corpus_checksum": "a" * 64,
+        }
+    )
+
+
+def test_ensure_index_revision_rejects_missing_metadata() -> None:
+    with patch("app.search.store.chromadb.PersistentClient") as client_class:
+        client = MagicMock()
+        collection = MagicMock()
+        collection.metadata = {
+            "embedding_model": "test-model",
+            "embedding_dim": 3,
+            "corpus_checksum": "a" * 64,
+        }
+        collection.count.return_value = 1
+
+        client.get_or_create_collection.return_value = collection
+        client_class.return_value = client
+
+        store = ChromaStore(
+            path=Path("test-chroma"),
+            collection_name="test-collection",
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="no index revision metadata",
+        ):
+            store.ensure_index_revision()

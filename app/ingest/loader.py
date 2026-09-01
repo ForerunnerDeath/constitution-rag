@@ -1,4 +1,5 @@
 import re
+from hashlib import sha256
 from pathlib import Path
 
 _CHAR_TRANSLATION = str.maketrans(
@@ -41,6 +42,10 @@ def normalize_text(text: str) -> str:
         normalized_lines.append(line)
 
     return "\n".join(normalized_lines).strip("\n")
+
+
+def calculate_checksum(path: Path) -> str:
+    return sha256(path.read_bytes()).hexdigest()
 
 
 def load_text(path: Path) -> str:
