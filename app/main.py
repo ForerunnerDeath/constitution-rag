@@ -198,6 +198,7 @@ async def ask(
     result = await rag_service.ask(
         sanitized_question,
         payload.k,
+        request_id=request.state.request_id,
     )
 
     log_event(

@@ -1,6 +1,12 @@
 from typing import Protocol
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAIError
+
+
+class LLMClientError(Exception):
+    def __init__(self, message: str, *, error_type: str) -> None:
+        super().__init__(message)
+        self.error_type = error_type
 
 
 class LLMClient(Protocol):
@@ -33,21 +39,24 @@ class OpenAICompatibleLLMClient:
         )
 
     async def generate(self, *, system_prompt: str, user_prompt: str) -> str:
-        response = await self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                },
-            ],
-            temperature=0,
-            max_tokens=self._max_tokens,
-        )
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt,
+                    },
+                ],
+                temperature=0,
+                max_tokens=self._max_tokens,
+            )
+        except OpenAIError as exc:
+            raise LLMClientError(str(exc), error_type=type(exc).__name__) from exc
 
         content = response.choices[0].message.content
 

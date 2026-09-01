@@ -666,6 +666,9 @@ def test_ask_returns_generated_answer_with_citations() -> None:
                         "question": "Кто является источником власти?",
                         "k": 5,
                     },
+                    headers={
+                        "X-Request-ID": "test-request-id",
+                    },
                 )
     finally:
         app.dependency_overrides.clear()
@@ -695,6 +698,7 @@ def test_ask_returns_generated_answer_with_citations() -> None:
     fake_rag_service.ask.assert_awaited_once_with(
         "Кто является источником власти?",
         5,
+        request_id="test-request-id",
     )
 
 
@@ -1054,6 +1058,7 @@ def test_ask_sanitizes_question_before_rag() -> None:
     fake_rag_service.ask.assert_awaited_once_with(
         "Кто является источником власти?",
         5,
+        request_id="sanitize-ask-1",
     )
 
     _, kwargs = log_event_mock.call_args
