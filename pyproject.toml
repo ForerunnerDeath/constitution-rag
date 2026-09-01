@@ -1,0 +1,19 @@
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "standard"
+include = [
+    "app",
+    "scripts",
+    "tests",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests using real external libraries and local model inference",
+]
