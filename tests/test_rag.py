@@ -130,6 +130,7 @@ async def test_rag_does_not_call_llm_when_retrieval_is_empty() -> None:
     retriever.retrieve_with_metrics.assert_called_once_with(
         "Какая погода в Москве?",
         5,
+        False,
     )
 
     llm.generate.assert_not_awaited()

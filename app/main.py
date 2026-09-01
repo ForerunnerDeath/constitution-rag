@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from time import perf_counter
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, status
 from fastapi.concurrency import run_in_threadpool
 
 from app.config import get_settings
@@ -48,6 +48,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     app.state.store.ensure_corpus_compatibility(settings.source_path)
+
+    app.state.store.ensure_index_revision()
 
     app.state.lexical_index = LexicalIndex(app.state.store.get_all())
 
@@ -161,13 +163,14 @@ async def search(
     return SearchResponse(
         hits=[SearchHitResponse.model_validate(hit) for hit in retrieval.hits],
         took_ms=took_ms,
-        collection_version=retriever.collection_name,
+        collection_version=retriever.index_revision,
     )
 
 
 @app.get("/articles/{number}", response_model=ArticleResponse)
 async def get_article(
-    number: str, store: ChromaStore = Depends(get_store)
+    number: Annotated[str, Path(pattern=r"^\d+(?:\.\d+)?$")],
+    store: ChromaStore = Depends(get_store),
 ) -> ArticleResponse:
     hits = await run_in_threadpool(store.get_by_article, number)
 
@@ -200,6 +203,7 @@ async def ask(
     result = await rag_service.ask(
         sanitized_question,
         payload.k,
+        use_hybrid=payload.use_hybrid,
         request_id=request.state.request_id,
     )
 

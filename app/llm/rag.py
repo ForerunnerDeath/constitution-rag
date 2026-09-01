@@ -76,12 +76,18 @@ class RAGService:
         self._llm_client = llm_client
 
     async def ask(
-        self, question: str, k: int = 5, *, request_id: str | None = None
+        self,
+        question: str,
+        k: int = 5,
+        *,
+        use_hybrid: bool = False,
+        request_id: str | None = None,
     ) -> RAGResult:
         retrieval = await run_in_threadpool(
             self._retriever.retrieve_with_metrics,
             question,
             k,
+            use_hybrid,
         )
         hits = retrieval.hits
 

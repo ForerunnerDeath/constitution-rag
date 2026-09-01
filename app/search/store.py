@@ -255,9 +255,33 @@ class ChromaStore:
 
         self.collection.modify(metadata=metadata)
 
+    def get_index_revision(self) -> str | None:
+        metadata = dict(self.collection.metadata or {})
+        revision = metadata.get("index_revision")
+
+        if revision is None:
+            return None
+
+        if not isinstance(revision, str):
+            raise RuntimeError("Chroma collection has invalid index revision metadata")
+
+        return revision
+
+    def set_index_revision(self, revision: str) -> None:
+        metadata = dict(self.collection.metadata or {})
+        metadata["index_revision"] = revision
+
+        self.collection.modify(metadata=metadata)
+
     def clear_corpus_checksum(self) -> None:
         metadata = dict(self.collection.metadata or {})
         metadata.pop("corpus_checksum", None)
+
+        self.collection.modify(metadata=metadata)
+
+    def clear_index_revision(self) -> None:
+        metadata = dict(self.collection.metadata or {})
+        metadata.pop("index_revision", None)
 
         self.collection.modify(metadata=metadata)
 
@@ -278,6 +302,16 @@ class ChromaStore:
         if stored_checksum != source_checksum:
             raise RuntimeError(
                 "corpus checksum mismatch: source corpus differs from indexed corpus; "
+                "run ingest to rebuild the index"
+            )
+
+    def ensure_index_revision(self) -> None:
+        if self.count() == 0:
+            return
+
+        if self.get_index_revision() is None:
+            raise RuntimeError(
+                "Chroma collection has no index revision metadata; "
                 "run ingest to rebuild the index"
             )
 

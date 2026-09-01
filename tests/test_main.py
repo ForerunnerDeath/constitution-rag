@@ -84,6 +84,8 @@ def test_lifespan_initializes_dependencies() -> None:
         Path("data/raw/constitution.txt")
     )
 
+    fake_store.ensure_index_revision.assert_called_once_with()
+
     fake_store.get_all.assert_called_once_with()
 
     lexical_index_class.assert_called_once_with(fake_corpus)
@@ -160,6 +162,7 @@ def test_search_returns_retrieval_results() -> None:
 
     fake_retriever = MagicMock(spec=Retriever)
     fake_retriever.collection_name = "test-collection"
+    fake_retriever.index_revision = "b" * 64
     hit = Hit(
         id="art-3-p-1",
         quote="Носителем суверенитета является народ.",
@@ -215,7 +218,7 @@ def test_search_returns_retrieval_results() -> None:
         }
     ]
 
-    assert body["collection_version"] == "test-collection"
+    assert body["collection_version"] == "b" * 64
     assert body["took_ms"] >= 0
     assert body["disclaimer"] == EXPECTED_DISCLAIMER
 
@@ -304,6 +307,7 @@ def test_search_runs_retriever_in_threadpool() -> None:
     fake_store.collection_name = "test-collection"
 
     fake_retriever = MagicMock(spec=Retriever)
+    fake_retriever.index_revision = "b" * 64
     fake_retriever.collection_name = "test-collection"
 
     fake_retrieval = RetrievalResult(
@@ -520,6 +524,7 @@ def test_search_enables_hybrid_retrieval() -> None:
     fake_store.collection_name = "test-collection"
 
     fake_retriever = MagicMock(spec=Retriever)
+    fake_retriever.index_revision = "b" * 64
     fake_retriever.collection_name = "test-collection"
     fake_retriever.retrieve_with_metrics.return_value = RetrievalResult(
         hits=[],
@@ -704,6 +709,7 @@ def test_ask_returns_generated_answer_with_citations() -> None:
     fake_rag_service.ask.assert_awaited_once_with(
         "Кто является источником власти?",
         5,
+        use_hybrid=False,
         request_id="test-request-id",
     )
 
@@ -827,6 +833,7 @@ def test_search_writes_audit_log() -> None:
     fake_store.collection_name = "test-collection"
 
     fake_retriever = MagicMock(spec=Retriever)
+    fake_retriever.index_revision = "b" * 64
     fake_retriever.collection_name = "test-collection"
 
     hit = Hit(
@@ -974,6 +981,7 @@ def test_search_sanitizes_question_before_retrieval() -> None:
     fake_store.collection_name = "test-collection"
 
     fake_retriever = MagicMock(spec=Retriever)
+    fake_retriever.index_revision = "b" * 64
     fake_retriever.collection_name = "test-collection"
 
     fake_retriever.retrieve_with_metrics.return_value = RetrievalResult(
@@ -1064,6 +1072,7 @@ def test_ask_sanitizes_question_before_rag() -> None:
     fake_rag_service.ask.assert_awaited_once_with(
         "Кто является источником власти?",
         5,
+        use_hybrid=False,
         request_id="sanitize-ask-1",
     )
 
@@ -1198,3 +1207,82 @@ def test_lifespan_rejects_stale_corpus_before_loading_index() -> None:
 
     fake_store.get_all.assert_not_called()
     lexical_index_class.assert_not_called()
+
+
+def test_ask_passes_hybrid_flag_to_rag_service() -> None:
+    fake_embedder = MagicMock(spec=Embedder)
+    fake_store = MagicMock(spec=ChromaStore)
+
+    fake_retriever = MagicMock(spec=Retriever)
+
+    fake_rag_service = MagicMock(spec=RAGService)
+    fake_rag_service.ask.return_value = RAGResult(
+        found=False,
+        answer=None,
+        message="Ничего не найдено.",
+        hits=[],
+        llm_used=False,
+    )
+
+    with (
+        patch(
+            "app.main.Embedder",
+            return_value=fake_embedder,
+        ),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+        patch(
+            "app.main.Retriever",
+            return_value=fake_retriever,
+        ),
+        patch(
+            "app.main.RAGService",
+            return_value=fake_rag_service,
+        ),
+    ):
+        with TestClient(app) as client:
+            response = client.post(
+                "/ask",
+                json={
+                    "question": "Кто является источником власти?",
+                    "k": 5,
+                    "use_hybrid": True,
+                },
+            )
+
+    assert response.status_code == 200
+
+    fake_rag_service.ask.assert_called_once()
+
+    call_kwargs = fake_rag_service.ask.call_args.kwargs
+
+    assert call_kwargs.get("use_hybrid") is True
+
+
+@pytest.mark.parametrize(
+    "number",
+    [
+        "foo",
+        "67.1.2",
+        "-1",
+        "1.",
+        ".1",
+    ],
+)
+def test_get_article_rejects_invalid_article_number(number: str) -> None:
+    fake_store = MagicMock(spec=ChromaStore)
+
+    with (
+        patch("app.main.Embedder"),
+        patch(
+            "app.main.ChromaStore",
+            return_value=fake_store,
+        ),
+    ):
+        with TestClient(app) as client:
+            response = client.get(f"/articles/{number}")
+
+    assert response.status_code == 422
+    fake_store.get_by_article.assert_not_called()

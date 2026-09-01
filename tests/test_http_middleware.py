@@ -62,6 +62,7 @@ def test_request_id_is_generated_when_header_missing() -> None:
 def test_rate_limit_returns_429_when_limit_exceeded() -> None:
     fake_retriever = MagicMock(spec=Retriever)
     fake_retriever.collection_name = "test-collection"
+    fake_retriever.index_revision = "b" * 64
 
     fake_retriever.retrieve_with_metrics.return_value = RetrievalResult(
         hits=[],
